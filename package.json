@@ -1,0 +1,19 @@
+{
+  "name": "pulsecheck",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "migrate": "npm --workspace server run migrate",
+    "test": "npm --workspace server test",
+    "build": "npm --workspace client run build"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}
