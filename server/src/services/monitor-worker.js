@@ -6,7 +6,7 @@ export async function runWorkerCycle({ model, checkEndpoint, resolver, batchSize
       check = await checkEndpoint(endpoint, { resolver });
     } catch (error) {
       logger.error(`Unexpected check failure for ${endpoint.id}: ${error.message}`);
-      check = { status: 'DOWN', httpStatus: null, latencyMs: 0, errorType: 'NETWORK_ERROR' };
+      check = { status: 'DOWN', httpStatus: null, latencyMs: null, errorType: 'NETWORK_ERROR' };
     }
 
     try {

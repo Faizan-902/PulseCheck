@@ -40,6 +40,26 @@ describe('scheduled monitoring worker', () => {
     }));
   });
 
+  it('does not fabricate zero latency when the checker unexpectedly throws', async () => {
+    const model = {
+      claimDueEndpoints: vi.fn().mockResolvedValue([endpoint]),
+      recordScheduledCheck: vi.fn().mockResolvedValue({ status: 'DOWN' })
+    };
+    const logger = { error: vi.fn() };
+
+    await runWorkerCycle({ model, checkEndpoint: vi.fn().mockRejectedValue(new Error('unexpected checker failure')), logger });
+
+    expect(model.recordScheduledCheck).toHaveBeenCalledWith({
+      endpointId: endpoint.id,
+      leaseToken: endpoint.leaseToken,
+      status: 'DOWN',
+      httpStatus: null,
+      latencyMs: null,
+      errorType: 'NETWORK_ERROR'
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+  });
+
   it('rejects a cycle when result persistence fails instead of reporting success', async () => {
     const model = {
       claimDueEndpoints: vi.fn().mockResolvedValue([endpoint]),

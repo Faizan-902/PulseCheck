@@ -58,19 +58,19 @@ export function createEndpointModel(pool) {
       await pool.query('SELECT 1');
     },
 
-    async createEndpoint({ name, url, timeoutMs, checkIntervalSeconds = 300 }) {
+    async createEndpoint({ ownerId, name, url, timeoutMs, checkIntervalSeconds = 300 }) {
       const result = await pool.query(
-        `INSERT INTO monitored_endpoints (name, url, timeout_ms, check_interval_seconds)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO monitored_endpoints (owner_id, name, url, timeout_ms, check_interval_seconds)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id, name, url, timeout_ms AS "timeoutMs",
                    check_interval_seconds AS "checkIntervalSeconds",
                    next_check_at AS "nextCheckAt", is_active AS "isActive", created_at AS "createdAt"`,
-        [name, url, timeoutMs, checkIntervalSeconds]
+        [ownerId, name, url, timeoutMs, checkIntervalSeconds]
       );
       return result.rows[0];
     },
 
-    async listEndpoints() {
+    async listEndpoints(ownerId) {
       const result = await pool.query(
         `SELECT endpoint.id, endpoint.name, endpoint.url,
                 endpoint.timeout_ms AS "timeoutMs",
@@ -90,27 +90,46 @@ export function createEndpointModel(pool) {
            ORDER BY checked_at DESC, id DESC
            LIMIT 1
          ) AS latest ON TRUE
-         ORDER BY endpoint.created_at DESC, endpoint.id`
+         WHERE endpoint.owner_id = $1
+         ORDER BY endpoint.created_at DESC, endpoint.id`,
+        [ownerId]
       );
       return result.rows;
     },
 
-    async findEndpointById(id) {
+    async findEndpointById(id, ownerId) {
       const result = await pool.query(
         `SELECT id, name, url, timeout_ms AS "timeoutMs",
                 check_interval_seconds AS "checkIntervalSeconds",
                 next_check_at AS "nextCheckAt", is_active AS "isActive", created_at AS "createdAt"
-         FROM monitored_endpoints WHERE id = $1`,
-        [id]
+         FROM monitored_endpoints WHERE id = $1 AND owner_id = $2`,
+        [id, ownerId]
       );
       return result.rows[0] ?? null;
     },
 
-    async createCheck({ endpointId, status, httpStatus, latencyMs, errorType }) {
+    async deleteEndpoint(id, ownerId) {
+      const result = await pool.query(
+        `DELETE FROM monitored_endpoints
+         WHERE id = $1 AND owner_id = $2
+         RETURNING id`,
+        [id, ownerId]
+      );
+      return result.rowCount === 1;
+    },
+
+    async createCheck({ endpointId, ownerId, status, httpStatus, latencyMs, errorType }) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT id FROM monitored_endpoints WHERE id = $1 FOR UPDATE', [endpointId]);
+        const owned = await client.query(
+          'SELECT id FROM monitored_endpoints WHERE id = $1 AND owner_id = $2 FOR UPDATE',
+          [endpointId, ownerId]
+        );
+        if (!owned.rows[0]) {
+          await client.query('COMMIT');
+          return null;
+        }
         const saved = await insertCheckAndUpdateIncident(client, {
           endpointId, status, httpStatus, latencyMs, errorType, checkSource: 'MANUAL'
         });
@@ -124,16 +143,21 @@ export function createEndpointModel(pool) {
       }
     },
 
-    async listChecks(endpointId, limit) {
+    async listChecks(endpointId, limit, ownerId) {
       const result = await pool.query(
         `SELECT id, endpoint_id AS "endpointId", checked_at AS "checkedAt", status,
                 check_source AS "checkSource", http_status AS "httpStatus",
                 latency_ms AS "latencyMs", error_type AS "errorType"
          FROM check_results
          WHERE endpoint_id = $1
+           AND EXISTS (
+             SELECT 1 FROM monitored_endpoints
+             WHERE monitored_endpoints.id = check_results.endpoint_id
+               AND monitored_endpoints.owner_id = $3
+           )
          ORDER BY checked_at DESC, id DESC
          LIMIT $2`,
-        [endpointId, limit]
+        [endpointId, limit, ownerId]
       );
       return result.rows;
     },
@@ -213,12 +237,18 @@ export function createEndpointModel(pool) {
       }
     },
 
-    async listIncidents(endpointId) {
+    async listIncidents(endpointId, ownerId) {
       const result = await pool.query(
         `SELECT id, endpoint_id AS "endpointId", opened_at AS "openedAt",
                 resolved_at AS "resolvedAt"
-         FROM incidents WHERE endpoint_id = $1 ORDER BY opened_at DESC, id DESC`,
-        [endpointId]
+         FROM incidents
+         WHERE endpoint_id = $1 AND EXISTS (
+           SELECT 1 FROM monitored_endpoints
+           WHERE monitored_endpoints.id = incidents.endpoint_id
+             AND monitored_endpoints.owner_id = $2
+         )
+         ORDER BY opened_at DESC, id DESC`,
+        [endpointId, ownerId]
       );
       return result.rows;
     }

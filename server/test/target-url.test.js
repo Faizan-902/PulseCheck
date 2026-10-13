@@ -23,6 +23,18 @@ describe('target URL safety', () => {
     expect(lookedUp).toBe(false);
   });
 
+  it.each([
+    'http://127.0.0.1/',
+    'http://2130706433/',
+    'http://0x7f000001/',
+    'http://100.64.0.1/',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://[::ffff:127.0.0.1]/',
+    'http://[fd00::1]/'
+  ])('rejects non-public IP literal %s', async (url) => {
+    await expect(validateTargetUrl(url)).rejects.toMatchObject({ code: 'UNSAFE_TARGET' });
+  });
+
   it('rejects a mixed public and private DNS answer set', async () => {
     await expect(validateTargetUrl('https://api.example.com', async () => [
       { address: '93.184.216.34', family: 4 },

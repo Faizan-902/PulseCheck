@@ -7,6 +7,7 @@
     "client"
   ],
   "scripts": {
+    "start": "npm --workspace server start",
     "dev:server": "npm --workspace server run dev",
     "dev:client": "npm --workspace client run dev",
     "dev:worker": "npm --workspace server run worker:dev",

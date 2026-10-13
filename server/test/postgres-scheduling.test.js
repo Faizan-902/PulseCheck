@@ -1,9 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import request from 'supertest';
 import { env } from '../src/config/env.js';
+import { createApp } from '../src/app.js';
 import { createEndpointModel } from '../src/models/endpoint-model.js';
+import { createAuthModel } from '../src/models/auth-model.js';
+import { createPostgresRateLimitStore } from '../src/models/postgres-rate-limit-store.js';
+import { listMigrationFiles } from '../src/db/migration-files.js';
+import { applyMigrations } from '../src/db/migrate.js';
+import { cleanupExpiredData } from '../src/services/data-retention.js';
 import { runWorkerCycle } from '../src/services/monitor-worker.js';
 
 const { Pool } = pg;
@@ -28,12 +36,31 @@ const poolOne = new Pool({ ...connectionOptions, options: `-c search_path=${sche
 const poolTwo = new Pool({ ...connectionOptions, options: `-c search_path=${schema},public` });
 const modelOne = createEndpointModel(poolOne);
 const modelTwo = createEndpointModel(poolTwo);
+const authModel = createAuthModel(poolOne);
+const authModelTwo = createAuthModel(poolTwo);
+const rateLimitStoreOne = createPostgresRateLimitStore(poolOne);
+const rateLimitStoreTwo = createPostgresRateLimitStore(poolTwo);
+const signupRateLimitStoreOne = createPostgresRateLimitStore(poolOne, 'signup');
+const signupRateLimitStoreTwo = createPostgresRateLimitStore(poolTwo, 'signup');
+const authApp = createApp({
+  model: modelOne,
+  authModel,
+  frontendOrigin: 'http://localhost:5173',
+  cookieSecure: false,
+  cookieSameSite: 'lax',
+  sessionTtlHours: 1,
+  loginRateLimitStore: rateLimitStoreOne
+});
 const migrationDirectory = new URL('../migrations/', import.meta.url);
 let schemaCreated = false;
 let endpointId;
+let legacyEndpointId;
+const ownerId = randomUUID();
+const otherOwnerId = randomUUID();
 
 async function createEndpoint(name) {
   const endpoint = await modelOne.createEndpoint({
+    ownerId,
     name,
     url: 'https://status.example.org/health',
     timeoutMs: 1000,
@@ -76,15 +103,28 @@ beforeAll(async () => {
 
   const client = await poolOne.connect();
   try {
-    for (const filename of [
-      '001_create_monitored_endpoints.sql',
-      '002_create_check_results.sql',
-      '003_add_scheduling_and_incidents.sql',
-      '004_fence_scheduled_checks.sql'
-    ]) {
-      const sql = await readFile(new URL(filename, migrationDirectory), 'utf8');
-      await client.query(sql);
-    }
+    const migrationFiles = await listMigrationFiles(fileURLToPath(migrationDirectory));
+    expect(migrationFiles).toContain('007_allow_unavailable_latency.sql');
+    await applyMigrations(client, {
+      directory: fileURLToPath(migrationDirectory),
+      logger: { log() {} },
+      beforeMigration: async (filename, migrationClient) => {
+        if (filename === '005_add_users_sessions_ownership.sql') {
+          const legacy = await migrationClient.query(
+            `INSERT INTO monitored_endpoints (name, url, timeout_ms, next_check_at)
+             VALUES ('Legacy endpoint', 'https://legacy.example.org/health', 1000, NOW() + INTERVAL '1 day')
+             RETURNING id`
+          );
+          legacyEndpointId = legacy.rows[0].id;
+        }
+      }
+    });
+    await client.query(
+      `INSERT INTO users (id, name, email, password_hash)
+       VALUES ($1, 'Owner', 'owner@example.com', 'test-hash'),
+              ($2, 'Other', 'other@example.com', 'test-hash')`,
+      [ownerId, otherOwnerId]
+    );
   } finally {
     client.release();
   }
@@ -104,6 +144,224 @@ afterAll(async () => {
 });
 
 describe('PostgreSQL scheduled monitoring integration', () => {
+  it('discovers migration 007 in runner order and applies its nullable-latency change in the disposable schema', async () => {
+    const migrations = await listMigrationFiles(fileURLToPath(migrationDirectory));
+    expect(migrations.at(-1)).toBe('007_allow_unavailable_latency.sql');
+    const nullable = await poolOne.query(
+      `SELECT is_nullable FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'check_results' AND column_name = 'latency_ms'`,
+      [schema]
+    );
+    expect(nullable.rows[0]?.is_nullable).toBe('YES');
+    const tracked = await poolOne.query(
+      'SELECT name FROM schema_migrations WHERE name = $1',
+      ['007_allow_unavailable_latency.sql']
+    );
+    expect(tracked.rowCount).toBe(1);
+  });
+
+  it('cleans expired sessions and rate-limit rows in bounded concurrent batches', async () => {
+    const [cleanupClientOne, cleanupClientTwo] = await Promise.all([
+      poolOne.connect(),
+      poolTwo.connect()
+    ]);
+    try {
+      const [backendOne, backendTwo] = await Promise.all([
+        cleanupClientOne.query('SELECT pg_backend_pid() AS pid'),
+        cleanupClientTwo.query('SELECT pg_backend_pid() AS pid')
+      ]);
+      expect(backendOne.rows[0].pid).not.toBe(backendTwo.rows[0].pid);
+    } finally {
+      cleanupClientOne.release();
+      cleanupClientTwo.release();
+    }
+
+    const expiredTokens = Array.from({ length: 3 }, () => createHash('sha256').update(randomBytes(32)).digest('hex'));
+    for (const tokenHash of expiredTokens) {
+      await authModel.createSession({
+        userId: ownerId,
+        tokenHash,
+        csrfToken: randomBytes(32).toString('base64url'),
+        expiresAt: new Date(Date.now() + 60_000)
+      });
+      await poolOne.query(
+        `UPDATE user_sessions
+         SET created_at = clock_timestamp() - INTERVAL '2 minutes',
+             expires_at = clock_timestamp() - INTERVAL '1 minute'
+         WHERE token_hash = $1`,
+        [tokenHash]
+      );
+    }
+    const liveToken = createHash('sha256').update(randomBytes(32)).digest('hex');
+    await authModel.createSession({
+      userId: ownerId,
+      tokenHash: liveToken,
+      csrfToken: randomBytes(32).toString('base64url'),
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const expiredRateKeys = Array.from({ length: 3 }, () => createHash('sha256').update(randomBytes(32)).digest('hex'));
+    const liveRateKey = createHash('sha256').update(randomBytes(32)).digest('hex');
+    for (const keyHash of [...expiredRateKeys, liveRateKey]) {
+      await poolOne.query(
+        `INSERT INTO login_rate_limits (key_hash, hits, reset_at)
+         VALUES ($1, 1, $2)`,
+        [keyHash, expiredRateKeys.includes(keyHash) ? new Date(Date.now() - 60_000) : new Date(Date.now() + 60_000)]
+      );
+    }
+
+    const [sessionBatchOne, sessionBatchTwo] = await Promise.all([
+      authModel.deleteExpiredSessionsBatch(2),
+      authModelTwo.deleteExpiredSessionsBatch(2)
+    ]);
+    expect(sessionBatchOne).toBeLessThanOrEqual(2);
+    expect(sessionBatchTwo).toBeLessThanOrEqual(2);
+    expect(sessionBatchOne + sessionBatchTwo).toBe(3);
+    expect((await poolOne.query('SELECT token_hash FROM user_sessions WHERE token_hash = $1', [liveToken])).rowCount).toBe(1);
+
+    const [rateBatchOne, rateBatchTwo] = await Promise.all([
+      rateLimitStoreOne.deleteExpiredBatch(2),
+      rateLimitStoreTwo.deleteExpiredBatch(2)
+    ]);
+    expect(rateBatchOne).toBeLessThanOrEqual(2);
+    expect(rateBatchTwo).toBeLessThanOrEqual(2);
+    expect(rateBatchOne + rateBatchTwo).toBe(3);
+    expect((await poolOne.query('SELECT key_hash FROM login_rate_limits WHERE key_hash = $1', [liveRateKey])).rowCount).toBe(1);
+
+    const bounded = await cleanupExpiredData({
+      authModel,
+      rateLimitStore: rateLimitStoreOne,
+      batchSize: 2,
+      maxBatches: 1
+    });
+    expect(bounded).toMatchObject({
+      sessions: { deleted: 0, hasMore: false },
+      rateLimits: { deleted: 0, hasMore: false },
+      hasMore: false
+    });
+    await poolOne.query('DELETE FROM user_sessions WHERE token_hash = $1', [liveToken]);
+    await poolOne.query('DELETE FROM login_rate_limits WHERE key_hash = $1', [liveRateKey]);
+  });
+
+  it('supports signup and login after the ownership and shared-rate-limit migrations', async () => {
+    const email = `auth-flow-${randomUUID()}@example.com`;
+    try {
+      const signup = await request(authApp).post('/api/auth/signup')
+        .set('Origin', 'http://localhost:5173')
+        .send({ name: 'Integration User', email, password: 'a-long-integration-passphrase' });
+      expect(signup.status).toBe(201);
+      expect(signup.body.data.user.email).toBe(email);
+
+      const login = await request(authApp).post('/api/auth/login')
+        .set('Origin', 'http://localhost:5173')
+        .send({ email, password: 'a-long-integration-passphrase' });
+      expect(login.status).toBe(200);
+      expect(login.body.data.user.email).toBe(email);
+      expect(login.headers['set-cookie'][0]).toContain('pulsecheck_session=');
+    } finally {
+      await poolOne.query('DELETE FROM users WHERE email = $1', [email]);
+    }
+  });
+
+  it('shares login rate-limit counters across separate PostgreSQL connections', async () => {
+    const key = `test-${randomUUID()}`;
+    rateLimitStoreOne.init({ windowMs: 60_000 });
+    rateLimitStoreTwo.init({ windowMs: 60_000 });
+
+    const hits = await Promise.all([
+      rateLimitStoreOne.increment(key),
+      rateLimitStoreTwo.increment(key)
+    ]);
+    expect(hits.map(({ totalHits }) => totalHits).sort()).toEqual([1, 2]);
+    expect(await rateLimitStoreOne.increment(key)).toMatchObject({ totalHits: 3 });
+    await rateLimitStoreTwo.resetKey(key);
+  });
+
+  it('shares signup limits across connections without colliding with login limits', async () => {
+    const key = `test-${randomUUID()}`;
+    rateLimitStoreOne.init({ windowMs: 60_000 });
+    rateLimitStoreTwo.init({ windowMs: 60_000 });
+    signupRateLimitStoreOne.init({ windowMs: 60_000 });
+    signupRateLimitStoreTwo.init({ windowMs: 60_000 });
+
+    expect(await signupRateLimitStoreOne.increment(key)).toMatchObject({ totalHits: 1 });
+    expect(await signupRateLimitStoreTwo.increment(key)).toMatchObject({ totalHits: 2 });
+    expect(await rateLimitStoreOne.increment(key)).toMatchObject({ totalHits: 1 });
+    await signupRateLimitStoreTwo.resetKey(key);
+    await rateLimitStoreOne.resetKey(key);
+  });
+
+  it('persists an unavailable latency as SQL NULL after migration 007', async () => {
+    const endpoint = await createEndpoint('Unavailable latency');
+    const claimed = await claimEndpoint();
+    const saved = await modelOne.recordScheduledCheck({
+      endpointId: endpoint.id,
+      leaseToken: claimed.leaseToken,
+      status: 'DOWN',
+      httpStatus: null,
+      latencyMs: null,
+      errorType: 'NETWORK_ERROR'
+    });
+
+    const result = await poolOne.query(
+      `SELECT status, latency_ms FROM check_results WHERE endpoint_id = $1`, [endpoint.id]
+    );
+    expect(saved.status).toBe('DOWN');
+    expect(result.rows).toEqual([{ status: 'DOWN', latency_ms: null }]);
+  });
+
+  it('keeps pre-existing endpoints unassigned, hidden from user queries, and claimable by the worker', async () => {
+    const legacy = await poolOne.query(
+      'SELECT owner_id FROM monitored_endpoints WHERE id = $1', [legacyEndpointId]
+    );
+    expect(legacy.rows[0].owner_id).toBeNull();
+    expect(await modelOne.findEndpointById(legacyEndpointId, ownerId)).toBeNull();
+    expect(await modelOne.findEndpointById(legacyEndpointId, otherOwnerId)).toBeNull();
+
+    await poolOne.query(
+      'UPDATE monitored_endpoints SET next_check_at = clock_timestamp() WHERE id = $1',
+      [legacyEndpointId]
+    );
+    const [claim] = await modelOne.claimDueEndpoints(1);
+    expect(claim.id).toBe(legacyEndpointId);
+    expect(await modelOne.recordScheduledCheck({
+      endpointId: legacyEndpointId,
+      leaseToken: claim.leaseToken,
+      status: 'UP',
+      httpStatus: 200,
+      latencyMs: 5,
+      errorType: null
+    })).toMatchObject({ status: 'UP', checkSource: 'SCHEDULED' });
+  });
+
+  it('deletes only the owner monitor, cascades history and incidents, and rejects a stale worker result', async () => {
+    const endpoint = await createEndpoint('Delete with active lease');
+    await record(await claimEndpoint(), 'DOWN');
+    await record(await claimEndpoint(), 'DOWN');
+    expect(await modelOne.listIncidents(endpoint.id, ownerId)).toHaveLength(1);
+
+    const inFlightClaim = await claimEndpoint();
+    expect(await modelOne.deleteEndpoint(endpoint.id, otherOwnerId)).toBe(false);
+    expect(await modelOne.findEndpointById(endpoint.id, ownerId)).not.toBeNull();
+
+    expect(await modelOne.deleteEndpoint(endpoint.id, ownerId)).toBe(true);
+    const staleResult = await modelOne.recordScheduledCheck({
+      endpointId: endpoint.id,
+      leaseToken: inFlightClaim.leaseToken,
+      status: 'UP',
+      httpStatus: 200,
+      latencyMs: 12,
+      errorType: null
+    });
+    expect(staleResult).toBeNull();
+
+    const checks = await poolOne.query('SELECT count(*)::int AS count FROM check_results WHERE endpoint_id = $1', [endpoint.id]);
+    const incidents = await poolOne.query('SELECT count(*)::int AS count FROM incidents WHERE endpoint_id = $1', [endpoint.id]);
+    expect(checks.rows[0].count).toBe(0);
+    expect(incidents.rows[0].count).toBe(0);
+    expect(await modelOne.findEndpointById(endpoint.id, ownerId)).toBeNull();
+  });
+
   it('claims a due endpoint once across separate PostgreSQL connections', async () => {
     const endpoint = await createEndpoint('Concurrent claim');
     const [clientOne, clientTwo] = await Promise.all([poolOne.connect(), poolTwo.connect()]);
@@ -136,7 +394,7 @@ describe('PostgreSQL scheduled monitoring integration', () => {
       `SELECT next_check_at, check_lease_until, check_lease_token
        FROM monitored_endpoints WHERE id = $1`, [endpoint.id]
     );
-    const history = await modelOne.listChecks(endpoint.id, 10);
+    const history = await modelOne.listChecks(endpoint.id, 10, ownerId);
 
     expect(saved).toMatchObject({ status: 'UP', checkSource: 'SCHEDULED' });
     expect(history).toHaveLength(1);
@@ -150,23 +408,23 @@ describe('PostgreSQL scheduled monitoring integration', () => {
   it('opens after two scheduled failures and resolves after two scheduled successes; manual checks do not affect incidents', async () => {
     const endpoint = await createEndpoint('Incident transitions');
     await record(await claimEndpoint(), 'DOWN');
-    expect(await modelOne.listIncidents(endpoint.id)).toHaveLength(0);
+    expect(await modelOne.listIncidents(endpoint.id, ownerId)).toHaveLength(0);
 
-    await modelOne.createCheck({ endpointId, status: 'DOWN', httpStatus: null, latencyMs: 50, errorType: 'TIMEOUT' });
-    expect(await modelOne.listIncidents(endpoint.id)).toHaveLength(0);
+    await modelOne.createCheck({ endpointId, ownerId, status: 'DOWN', httpStatus: null, latencyMs: 50, errorType: 'TIMEOUT' });
+    expect(await modelOne.listIncidents(endpoint.id, ownerId)).toHaveLength(0);
 
     await record(await claimEndpoint(), 'DOWN');
-    let incidents = await modelOne.listIncidents(endpoint.id);
+    let incidents = await modelOne.listIncidents(endpoint.id, ownerId);
     expect(incidents).toHaveLength(1);
     expect(incidents[0].resolvedAt).toBeNull();
 
     await record(await claimEndpoint(), 'UP');
-    await modelOne.createCheck({ endpointId, status: 'UP', httpStatus: 200, latencyMs: 20, errorType: null });
-    incidents = await modelOne.listIncidents(endpoint.id);
+    await modelOne.createCheck({ endpointId, ownerId, status: 'UP', httpStatus: 200, latencyMs: 20, errorType: null });
+    incidents = await modelOne.listIncidents(endpoint.id, ownerId);
     expect(incidents[0].resolvedAt).toBeNull();
 
     await record(await claimEndpoint(), 'UP');
-    incidents = await modelOne.listIncidents(endpoint.id);
+    incidents = await modelOne.listIncidents(endpoint.id, ownerId);
     expect(incidents).toHaveLength(1);
     expect(incidents[0].resolvedAt).not.toBeNull();
   });
@@ -211,7 +469,7 @@ describe('PostgreSQL scheduled monitoring integration', () => {
     );
     expect(state.rows[0].check_lease_token).not.toBeNull();
     expect(state.rows[0].check_lease_until).not.toBeNull();
-    expect(await modelOne.listIncidents(endpoint.id)).toHaveLength(0);
+    expect(await modelOne.listIncidents(endpoint.id, ownerId)).toHaveLength(0);
   });
 
   it('recovers an expired lease with a fencing token and rejects the stale worker result', async () => {
@@ -237,7 +495,7 @@ describe('PostgreSQL scheduled monitoring integration', () => {
       errorType: 'TIMEOUT'
     });
     expect(staleResult).toBeNull();
-    expect(await modelOne.listChecks(endpoint.id, 10)).toHaveLength(0);
+    expect(await modelOne.listChecks(endpoint.id, 10, ownerId)).toHaveLength(0);
 
     const saved = await record(recoveredClaim, 'UP');
     expect(saved.status).toBe('UP');
@@ -248,5 +506,75 @@ describe('PostgreSQL scheduled monitoring integration', () => {
     expect(new Date(state.rows[0].next_check_at).getTime()).toBeGreaterThan(Date.now());
     expect(state.rows[0].check_lease_until).toBeNull();
     expect(state.rows[0].check_lease_token).toBeNull();
+  });
+
+  it('persists sessions and restricts endpoint, history, and incident queries to the owner', async () => {
+    const endpoint = await createEndpoint('Ownership boundary');
+    const rawSession = randomBytes(32).toString('base64url');
+    const tokenHash = createHash('sha256').update(rawSession).digest('hex');
+    const csrfToken = randomBytes(32).toString('base64url');
+    await authModel.createSession({
+      userId: ownerId,
+      tokenHash,
+      csrfToken,
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const session = await authModel.findSessionByTokenHash(tokenHash);
+    expect(session).toMatchObject({ userId: ownerId, email: 'owner@example.com', csrfToken });
+    expect(await modelOne.listEndpoints(ownerId)).toEqual(expect.arrayContaining([expect.objectContaining({ id: endpoint.id })]));
+    expect(await modelOne.listEndpoints(otherOwnerId)).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: endpoint.id })]));
+    expect(await modelOne.findEndpointById(endpoint.id, otherOwnerId)).toBeNull();
+    expect(await modelOne.listChecks(endpoint.id, 10, otherOwnerId)).toHaveLength(0);
+    expect(await modelOne.listIncidents(endpoint.id, otherOwnerId)).toHaveLength(0);
+    const unauthorizedCheck = await modelOne.createCheck({
+      endpointId: endpoint.id,
+      ownerId: otherOwnerId,
+      status: 'UP',
+      httpStatus: 200,
+      latencyMs: 2,
+      errorType: null
+    });
+    expect(unauthorizedCheck).toBeNull();
+    expect(await modelOne.listChecks(endpoint.id, 10, ownerId)).toHaveLength(0);
+
+    await authModel.deleteSession(tokenHash);
+    expect(await authModel.findSessionByTokenHash(tokenHash)).toBeNull();
+
+    const expiredTokenHash = createHash('sha256').update(randomBytes(32)).digest('hex');
+    await authModel.createSession({
+      userId: ownerId,
+      tokenHash: expiredTokenHash,
+      csrfToken: randomBytes(32).toString('base64url'),
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    await poolOne.query(
+      `UPDATE user_sessions
+       SET created_at = NOW() - INTERVAL '2 minutes',
+           expires_at = NOW() - INTERVAL '1 minute'
+       WHERE token_hash = $1`,
+      [expiredTokenHash]
+    );
+    expect(await authModel.findSessionByTokenHash(expiredTokenHash)).toBeNull();
+
+    const email = `signup-${randomUUID()}@example.com`;
+    const signupTokenHash = createHash('sha256').update(randomBytes(32)).digest('hex');
+    const signupCsrf = randomBytes(32).toString('base64url');
+    const createdUser = await authModel.createUserAndSession({
+      name: 'New User',
+      email,
+      passwordHash: 'argon2id-test-hash',
+      tokenHash: signupTokenHash,
+      csrfToken: signupCsrf,
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    expect(createdUser).toMatchObject({ name: 'New User', email });
+    expect(await authModel.findSessionByTokenHash(signupTokenHash)).toMatchObject({
+      userId: createdUser.id,
+      email,
+      csrfToken: signupCsrf
+    });
+    await poolOne.query('DELETE FROM users WHERE id = $1', [createdUser.id]);
+    expect(await authModel.findSessionByTokenHash(signupTokenHash)).toBeNull();
   });
 });
