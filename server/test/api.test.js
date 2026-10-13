@@ -37,7 +37,8 @@ function makeRepository() {
       checks.unshift(check);
       return check;
     }),
-    listChecks: vi.fn(async (id, limit) => checks.filter((check) => check.endpointId === id).slice(0, limit))
+    listChecks: vi.fn(async (id, limit) => checks.filter((check) => check.endpointId === id).slice(0, limit)),
+    listIncidents: vi.fn(async () => [])
   };
 }
 
@@ -116,14 +117,37 @@ describe('PulseCheck API', () => {
       name: 'Public API',
       url: 'https://api.example.com/health',
       timeoutMs: 5000,
+      checkIntervalSeconds: 300,
       isActive: true
     });
     expect(repository.createEndpoint).toHaveBeenCalledWith({
       name: 'Public API',
       url: 'https://api.example.com/health',
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      checkIntervalSeconds: 300
     });
     expect(publicResolver).toHaveBeenCalledWith('api.example.com');
+  });
+
+  it('rejects a check interval outside the supported range', async () => {
+    const response = await request(app)
+      .post('/api/endpoints')
+      .send({ name: 'Public API', url: 'https://api.example.com/health', checkIntervalSeconds: 5 });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.createEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('returns incident history for an endpoint', async () => {
+    await request(app).post('/api/endpoints').send({
+      name: 'Public API', url: 'https://api.example.com/health'
+    });
+    const response = await request(app).get(`/api/endpoints/${endpointId}/incidents`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ data: [] });
+    expect(repository.listIncidents).toHaveBeenCalledWith(endpointId);
   });
 
   it('runs and persists a successful manual check', async () => {

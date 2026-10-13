@@ -14,7 +14,8 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
       const endpoint = await model.createEndpoint({
         name: request.body.name,
         url: target.url.href,
-        timeoutMs: request.body.timeoutMs ?? defaultTimeoutMs
+        timeoutMs: request.body.timeoutMs ?? defaultTimeoutMs,
+        checkIntervalSeconds: request.body.checkIntervalSeconds ?? 300
       });
       response.status(201).json({ data: endpoint });
     },
@@ -38,6 +39,11 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
       await requireEndpoint(request.params.id);
       const checks = await model.listChecks(request.params.id, request.validatedQuery.limit);
       response.json({ data: checks });
+    },
+
+    async incidents(request, response) {
+      await requireEndpoint(request.params.id);
+      response.json({ data: await model.listIncidents(request.params.id) });
     }
   };
 }

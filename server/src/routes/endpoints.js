@@ -28,6 +28,7 @@ export function createEndpointsRouter(dependencies) {
     validate(checksQuerySchema, 'query'),
     controller.history
   );
+  router.get('/:id/incidents', validate(endpointIdSchema, 'params'), controller.incidents);
 
   return router;
 }

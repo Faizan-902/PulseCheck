@@ -71,7 +71,7 @@ export default function App() {
   const [formError, setFormError] = useState('');
   const [pageError, setPageError] = useState('');
   const [notice, setNotice] = useState('');
-  const [form, setForm] = useState({ name: '', url: '', timeoutMs: '5000' });
+  const [form, setForm] = useState({ name: '', url: '', timeoutMs: '5000', checkIntervalSeconds: '300' });
 
   const loadEndpoints = useCallback(async () => {
     setPageError('');
@@ -104,10 +104,11 @@ export default function App() {
         body: JSON.stringify({
           name: form.name,
           url: form.url,
-          timeoutMs: Number(form.timeoutMs)
+          timeoutMs: Number(form.timeoutMs),
+          checkIntervalSeconds: Number(form.checkIntervalSeconds)
         })
       });
-      setForm({ name: '', url: '', timeoutMs: '5000' });
+      setForm({ name: '', url: '', timeoutMs: '5000', checkIntervalSeconds: '300' });
       setNotice('Endpoint registered. Run a check when you are ready.');
       await loadEndpoints();
     } catch (error) {
@@ -136,8 +137,11 @@ export default function App() {
     setHistoryLoadingId(endpointId);
     setChecksByEndpoint((current) => ({ ...current, [endpointId]: { checks: current[endpointId]?.checks || [], error: '' } }));
     try {
-      const checks = await apiRequest(`/endpoints/${endpointId}/checks?limit=20`);
-      setChecksByEndpoint((current) => ({ ...current, [endpointId]: { checks, error: '' } }));
+      const [checks, incidents] = await Promise.all([
+        apiRequest(`/endpoints/${endpointId}/checks?limit=20`),
+        apiRequest(`/endpoints/${endpointId}/incidents`)
+      ]);
+      setChecksByEndpoint((current) => ({ ...current, [endpointId]: { checks, incidents, error: '' } }));
     } catch (error) {
       setChecksByEndpoint((current) => ({ ...current, [endpointId]: { checks: [], error: error.message } }));
     } finally {
@@ -161,14 +165,14 @@ export default function App() {
           <span className="brand-mark" aria-hidden="true"><span /></span>
           <span>pulsecheck</span>
         </a>
-        <span className="day-label"><span className="live-dot" /> MANUAL MONITORING</span>
+        <span className="day-label"><span className="live-dot" /> AUTOMATIC MONITORING</span>
       </header>
 
       <section className="intro" id="top">
         <div>
           <p className="eyebrow">YOUR API STATUS, AT A GLANCE</p>
           <h1>Endpoint monitor</h1>
-          <p className="intro-copy">Register an endpoint and run a check whenever you need a quick signal.</p>
+          <p className="intro-copy">Set a check interval and PulseCheck will monitor it while the worker is running. You can also check it manually.</p>
         </div>
         <div className="summary-card" aria-label="Endpoint summary">
           <div><strong>{summary.total}</strong><span>Endpoints</span></div>
@@ -218,6 +222,18 @@ export default function App() {
                 onChange={(event) => setForm({ ...form, timeoutMs: event.target.value })}
               />
             </label>
+            <label>
+              <span>Check interval <small>(30–86,400 seconds)</small></span>
+              <input
+                inputMode="numeric"
+                max="86400"
+                min="30"
+                required
+                type="number"
+                value={form.checkIntervalSeconds}
+                onChange={(event) => setForm({ ...form, checkIntervalSeconds: event.target.value })}
+              />
+            </label>
             {formError && <p className="inline-error" role="alert">{formError}</p>}
             {notice && <p className="inline-notice" role="status">{notice}</p>}
             <button className="primary-button" disabled={saving} type="submit">
@@ -245,7 +261,7 @@ export default function App() {
           ) : (
             <div className="endpoint-list">
               {endpoints.map((endpoint) => {
-                const history = checksByEndpoint[endpoint.id] || { checks: [], error: '' };
+                const history = checksByEndpoint[endpoint.id] || { checks: [], incidents: [], error: '' };
                 const isExpanded = expandedEndpointId === endpoint.id;
                 return (
                   <article className={`endpoint-card ${isExpanded ? 'is-expanded' : ''}`} key={endpoint.id}>
@@ -259,6 +275,8 @@ export default function App() {
                           <span>{endpoint.latestHttpStatus ? `HTTP ${endpoint.latestHttpStatus}` : 'No response yet'}</span>
                           <span className="meta-divider" />
                           <span>{endpoint.latestCheckedAt ? `Checked ${formatDate(endpoint.latestCheckedAt)}` : 'Never checked'}</span>
+                          <span className="meta-divider" />
+                          <span>Every {endpoint.checkIntervalSeconds ?? 300}s</span>
                         </div>
                       </div>
                       <div className="endpoint-actions">
@@ -273,6 +291,13 @@ export default function App() {
                     {isExpanded && (
                       <div className="history-panel">
                         <div className="history-heading"><h4>Recent checks</h4><span>Last 20 results</span></div>
+                        <div className="history-heading"><h4>Incidents</h4><span>{history.incidents?.filter((incident) => !incident.resolvedAt).length ? 'Open' : 'No open incident'}</span></div>
+                        {history.incidents?.map((incident) => (
+                          <p className="history-message" key={incident.id}>
+                            {incident.resolvedAt ? 'Resolved' : 'Open'} · started {formatDate(incident.openedAt)}
+                            {incident.resolvedAt ? ` · resolved ${formatDate(incident.resolvedAt)}` : ''}
+                          </p>
+                        ))}
                         <CheckHistory checks={history.checks} error={history.error} loading={historyLoadingId === endpoint.id} />
                       </div>
                     )}
@@ -284,7 +309,7 @@ export default function App() {
           {summary.down > 0 && <p className="down-summary">{summary.down} endpoint{summary.down === 1 ? '' : 's'} returned a server error or could not be reached.</p>}
         </section>
       </div>
-      <footer className="page-footer"><span>PulseCheck</span><span>Manual checks · Results saved to PostgreSQL</span></footer>
+      <footer className="page-footer"><span>PulseCheck</span><span>Automatic and manual checks · Results saved to PostgreSQL</span></footer>
     </main>
   );
 }

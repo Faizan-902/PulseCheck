@@ -16,7 +16,9 @@ const envSchema = z.object({
   HOST: z.string().trim().min(1).default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   FRONTEND_ORIGIN: z.string().url().default('http://localhost:5173'),
-  CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).max(30000).default(5000)
+  CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).max(30000).default(5000),
+  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(60000).default(5000),
+  WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10)
 });
 
 const parsed = envSchema.safeParse(process.env);

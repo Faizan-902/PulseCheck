@@ -15,7 +15,8 @@ export const registerEndpointSchema = z.object({
       context.addIssue({ code: 'custom', message: 'A valid URL is required.' });
     }
   }),
-  timeoutMs: z.coerce.number().int().min(100).max(30000).optional()
+  timeoutMs: z.coerce.number().int().min(100).max(30000).optional(),
+  checkIntervalSeconds: z.coerce.number().int().min(30).max(86400).optional()
 }).strict();
 
 export const endpointIdSchema = z.object({ id: z.string().uuid() });
