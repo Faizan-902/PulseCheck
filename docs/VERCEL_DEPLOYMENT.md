@@ -1,13 +1,13 @@
 # Deploy PulseCheck on Vercel
 
-This guide configures the current monorepo for a Vercel-hosted frontend and request-handling API. It does not provision a database or a worker host.
+This guide configures the current monorepo for a Vercel-hosted frontend and request-handling API. It does not provision a database or worker host.
 
 ## Architecture
 
 - **Frontend:** Vite builds the React dashboard into `client/dist`.
-- **API:** `api/[...path].js` exports the same Express app used by the local Node server through `server/src/runtime.js`. The function does not call `app.listen()`.
-- **Worker:** `npm run start:worker` must run as a separately supervised, persistent Node.js process. Do not deploy the polling loop as a Vercel Function or use a daily Hobby Cron for frequent monitoring.
-- **Database:** The API and worker share the same PostgreSQL database and migrations. Production connections require TLS with certificate verification.
+- **API:** `api/index.js` is a fixed Vercel Node.js Function that restores the original `/api/*` path and forwards the request to the same Express app used by local development via `server/src/runtime.js`.
+- **Worker:** `npm run start:worker` must run as a separately supervised, persistent Node.js process. Do not deploy the polling loop as a Vercel Function or rely on a daily Hobby Cron for frequent monitoring.
+- **Database:** The API and worker share the same PostgreSQL database and migration set. Production connections require TLS with certificate verification.
 
 ## Vercel project settings
 
@@ -18,7 +18,7 @@ Keep the project linked to the repository root. Do not set Root Directory to `cl
 - Node.js runtime: Node 24 (the linked project currently selects Node 24)
 - Leave `VITE_API_BASE_URL` unset so the dashboard calls same-origin `/api`.
 
-The existing SPA rewrite serves `index.html` for frontend deep links. Vercel gives filesystem routes precedence over rewrites; the `api/[...path].js` function therefore handles matching `/api/*` routes before the SPA fallback. Do not add a rewrite that sends `/api/*` directly to `/index.html`.
+**Routing note:** plain Vercel Functions do not support Next.js catch-all route semantics in `api/[...path].js`. The current setup uses a normal `api/index.js` function and an explicit `/api/:path*` rewrite before the SPA fallback. The function restores the original request path from a reserved internal query parameter and rejects duplicate/ambiguous values. Do not remove the API-first rewrite or send `/api/*` to `/index.html`.
 
 ## Vercel production environment variables
 

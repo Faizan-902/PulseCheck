@@ -60,14 +60,13 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
 
 ## Deployment preparation
 
-For Vercel deployment, follow [the Vercel deployment guide](docs/VERCEL_DEPLOYMENT.md). The dashboard and request API may share the Vercel origin; the scheduled monitoring worker still runs as a separate persistent process.
+For Vercel deployment, follow [the Vercel deployment guide](docs/VERCEL_DEPLOYMENT.md). In that setup, the React frontend and request-handling Express API use the same Vercel origin through `api/index.js`. The monitoring worker remains a separate persistent process.
 
-PulseCheck has three separately hosted runtime parts. Provision these before deploying:
+Before deploying, provision:
 
-- A static frontend host that can publish the contents of `client/dist`.
-- A Node.js 20.19+ service for the Express API, with the `PORT` supplied by the host and `HOST=0.0.0.0` so it accepts connections through the host's network interface.
-- A persistent Node.js 20.19+ worker service running `npm run start:worker`. Do not use a request-driven/serverless function for the worker. Configure the host or process manager to restart it on failure with a backoff; the application does not supervise or restart its own process. The worker retries database access on later polling cycles after startup, but exits if the initial database connection fails.
-- A reachable PostgreSQL 13+ database shared by the API and worker. Allow connections from both services and outbound DNS/HTTP(S) from the worker to public monitored endpoints.
+- A reachable PostgreSQL 13+ database shared by the API and worker. Allow connections from both runtimes and outbound DNS/HTTP(S) from the worker to public monitored endpoints.
+- A persistent Node.js 20.19+ worker service running `npm run start:worker`. Do not run the polling loop as a serverless function or cron job. Configure a supervisor to restart it with backoff; the application does not supervise or restart its own worker process.
+- If operating outside the Vercel architecture, a persistent Node.js service for the Express API with the host-supplied `PORT` and `HOST=0.0.0.0`. Vercel's request Function is an alternative for the API, not the long-lived worker.
 
 Configure the API and worker with `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` as platform-managed environment variables or secrets. Production startup requires `PGSSLMODE=require`; the pool verifies the server certificate. `PGSSLMODE=disable` is intended for local PostgreSQL. Set `FRONTEND_ORIGIN` to the frontend's exact HTTPS origin (scheme and hostname, with a port only when applicable). Production startup rejects localhost frontend origins and insecure session-cookie configuration. `SESSION_COOKIE_SECURE` defaults to true in production; set `SESSION_COOKIE_SAME_SITE=none` as well when the frontend and API are on different sites. `HOST` defaults to `0.0.0.0` in production and `127.0.0.1` locally. Do not put production credentials in the repository or frontend environment: values prefixed with `VITE_` are compiled into public browser assets.
 
