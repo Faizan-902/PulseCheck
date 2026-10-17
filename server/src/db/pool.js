@@ -10,7 +10,7 @@ export const pool = new Pool({
   user: env.PGUSER,
   password: env.PGPASSWORD,
   ssl: env.PGSSLMODE === 'require' ? { rejectUnauthorized: true } : false,
-  max: 10,
+  max: env.PGPOOL_MAX,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000
 });
