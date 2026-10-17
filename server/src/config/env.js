@@ -12,6 +12,7 @@ const envSchema = z.object({
   PGDATABASE: z.string().trim().min(1),
   PGUSER: z.string().trim().min(1),
   PGPASSWORD: z.string().default(''),
+  PGPOOL_MAX: z.coerce.number().int().min(1).max(10).default(process.env.VERCEL ? 2 : 10),
   PGSSLMODE: z.enum(['disable', 'require']).default(process.env.NODE_ENV === 'production' ? 'require' : 'disable'),
   HOST: z.string().trim().min(1).default(process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
