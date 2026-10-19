@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "worker": "node src/worker.js",
     "worker:dev": "node --watch src/worker.js",
+    "worker:once": "node src/worker-once.js",
     "migrate": "node src/db/migrate.js",
     "test": "vitest run"
   },
