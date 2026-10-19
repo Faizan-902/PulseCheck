@@ -139,6 +139,53 @@ describe('authentication API', () => {
     expect(rejected.headers['access-control-allow-origin']).toBeUndefined();
   });
 
+  it('allows credentialed CORS for the deployment origin that served the request', async () => {
+    const authModel = makeAuthModel();
+    const app = makeApp(authModel);
+    const deploymentOrigin = 'https://pulsecheck-abc123.vercel.app';
+    const allowed = await request(app).options('/api/auth/login')
+      .set('Host', 'pulsecheck-abc123.vercel.app')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Origin', deploymentOrigin)
+      .set('Access-Control-Request-Method', 'POST');
+    const signup = await request(app).post('/api/auth/signup')
+      .set('Host', 'pulsecheck-abc123.vercel.app')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Origin', deploymentOrigin)
+      .send({ name: 'Test User', email: 'person@example.com', password: 'a-long-secure-passphrase' });
+    const crossOrigin = await request(app).post('/api/auth/signup')
+      .set('Host', 'pulsecheck-abc123.vercel.app')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Origin', 'https://other-deployment.vercel.app')
+      .send({ name: 'Test User', email: 'other@example.com', password: 'a-long-secure-passphrase' });
+
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers['access-control-allow-origin']).toBe(deploymentOrigin);
+    expect(allowed.headers['access-control-allow-credentials']).toBe('true');
+    expect(signup.status).toBe(201);
+    expect(signup.headers['access-control-allow-origin']).toBe(deploymentOrigin);
+    expect(crossOrigin.status).toBe(403);
+    expect(crossOrigin.body.error.code).toBe('ORIGIN_NOT_ALLOWED');
+  });
+
+  it('rejects same-host origins with a different scheme or port', async () => {
+    const app = makeApp(makeAuthModel());
+    const wrongScheme = await request(app).post('/api/auth/signup')
+      .set('Host', 'pulsecheck-abc123.vercel.app')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Origin', 'http://pulsecheck-abc123.vercel.app')
+      .send({ name: 'Test User', email: 'person@example.com', password: 'a-long-secure-passphrase' });
+    const wrongPort = await request(app).post('/api/auth/signup')
+      .set('Host', '127.0.0.1:3001')
+      .set('Origin', 'http://127.0.0.1:5173')
+      .send({ name: 'Test User', email: 'person@example.com', password: 'a-long-secure-passphrase' });
+
+    expect(wrongScheme.status).toBe(403);
+    expect(wrongScheme.body.error.code).toBe('ORIGIN_NOT_ALLOWED');
+    expect(wrongPort.status).toBe(403);
+    expect(wrongPort.body.error.code).toBe('ORIGIN_NOT_ALLOWED');
+  });
+
   it('requires a valid CSRF token for logout and limits login attempts', async () => {
     const authModel = makeAuthModel();
     const app = makeApp(authModel, { loginRateLimit: { windowMs: 60000, limit: 2 } });
