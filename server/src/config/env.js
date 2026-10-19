@@ -4,7 +4,17 @@ import dotenv from 'dotenv';
 import { z } from 'zod';
 
 const projectEnvPath = resolve(fileURLToPath(new URL('../../../.env', import.meta.url)));
-dotenv.config({ path: projectEnvPath });
+if (process.env.PULSECHECK_DISABLE_DOTENV !== 'true') {
+  dotenv.config({ path: projectEnvPath });
+}
+
+const isVercelDeployment = process.env.VERCEL === '1';
+const isVercelPreview = isVercelDeployment && process.env.VERCEL_ENV === 'preview';
+const isProductionLike = process.env.NODE_ENV === 'production' ||
+  (isVercelDeployment && ['preview', 'production'].includes(process.env.VERCEL_ENV));
+const previewOrigin = isVercelPreview && process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : undefined;
 
 const envSchema = z.object({
   PGHOST: z.string().trim().min(1),
@@ -13,14 +23,14 @@ const envSchema = z.object({
   PGUSER: z.string().trim().min(1),
   PGPASSWORD: z.string().default(''),
   PGPOOL_MAX: z.coerce.number().int().min(1).max(10).default(process.env.VERCEL ? 2 : 10),
-  PGSSLMODE: z.enum(['disable', 'require']).default(process.env.NODE_ENV === 'production' ? 'require' : 'disable'),
+  PGSSLMODE: z.enum(['disable', 'require']).default(isProductionLike ? 'require' : 'disable'),
   HOST: z.string().trim().min(1).default(process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   FRONTEND_ORIGIN: z.string().url().refine((value) => {
     try { return new URL(value).origin === value; }
     catch { return false; }
-  }, 'Must be an origin without a path.').default('http://localhost:5173'),
-  SESSION_COOKIE_SECURE: z.enum(['true', 'false']).default(process.env.NODE_ENV === 'production' ? 'true' : 'false').transform((value) => value === 'true'),
+  }, 'Must be an origin without a path.').default(previewOrigin ?? 'http://localhost:5173'),
+  SESSION_COOKIE_SECURE: z.enum(['true', 'false']).default(isProductionLike ? 'true' : 'false').transform((value) => value === 'true'),
   SESSION_COOKIE_SAME_SITE: z.enum(['strict', 'lax', 'none']).default('lax'),
   AUTH_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(168),
   CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).max(30000).default(5000),
@@ -29,30 +39,48 @@ const envSchema = z.object({
 });
 
 const parsed = envSchema.safeParse(process.env);
+
+function throwConfigurationError(message, invalidVariables = []) {
+  const error = new Error(message);
+  error.name = 'EnvironmentConfigurationError';
+  error.code = 'INVALID_ENVIRONMENT_CONFIGURATION';
+  error.invalidVariables = invalidVariables;
+  throw error;
+}
+
 if (!parsed.success) {
   const issues = parsed.error.issues.map(({ path, message }) => `${path.join('.')}: ${message}`);
-  throw new Error(`Invalid environment configuration:\n${issues.join('\n')}`);
+  throwConfigurationError(
+    `Invalid environment configuration:\n${issues.join('\n')}`,
+    [...new Set(parsed.error.issues.map(({ path }) => path[0]).filter(Boolean))]
+  );
 }
 
 export const env = parsed.data;
 
 if (env.SESSION_COOKIE_SAME_SITE === 'none' && !env.SESSION_COOKIE_SECURE) {
-  throw new Error('SESSION_COOKIE_SECURE must be true when SESSION_COOKIE_SAME_SITE is none.');
+  throwConfigurationError('SESSION_COOKIE_SECURE must be true when SESSION_COOKIE_SAME_SITE is none.', [
+    'SESSION_COOKIE_SECURE',
+    'SESSION_COOKIE_SAME_SITE'
+  ]);
 }
 
-if (process.env.NODE_ENV === 'production') {
+if (isProductionLike) {
+  if (!env.PGPASSWORD.trim()) {
+    throwConfigurationError('PGPASSWORD is required in production.', ['PGPASSWORD']);
+  }
   if (env.PGSSLMODE !== 'require') {
-    throw new Error('PGSSLMODE=require is required in production.');
+    throwConfigurationError('PGSSLMODE=require is required in production.', ['PGSSLMODE']);
   }
   if (!env.SESSION_COOKIE_SECURE) {
-    throw new Error('SESSION_COOKIE_SECURE must be true in production.');
+    throwConfigurationError('SESSION_COOKIE_SECURE must be true in production.', ['SESSION_COOKIE_SECURE']);
   }
   const frontendUrl = new URL(env.FRONTEND_ORIGIN);
   if (frontendUrl.protocol !== 'https:') {
-    throw new Error('FRONTEND_ORIGIN must use HTTPS in production.');
+    throwConfigurationError('FRONTEND_ORIGIN must use HTTPS in production.', ['FRONTEND_ORIGIN']);
   }
   const frontendHostname = frontendUrl.hostname.replace(/^\[|\]$/g, '');
   if (frontendHostname === 'localhost' || frontendHostname === '127.0.0.1' || frontendHostname === '::1') {
-    throw new Error('FRONTEND_ORIGIN must be the deployed frontend origin in production.');
+    throwConfigurationError('FRONTEND_ORIGIN must be the deployed frontend origin in production.', ['FRONTEND_ORIGIN']);
   }
 }

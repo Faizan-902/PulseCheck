@@ -20,6 +20,14 @@ Keep the project linked to the repository root. Do not set Root Directory to `cl
 
 **Routing note:** plain Vercel Functions do not support Next.js catch-all route semantics in `api/[...path].js`. The current setup uses a normal `api/index.js` function and an explicit `/api/:path*` rewrite before the SPA fallback. The function restores the original request path from a reserved internal query parameter and rejects duplicate/ambiguous values. Do not remove the API-first rewrite or send `/api/*` to `/index.html`.
 
+**API diagnostics:** a missing or invalid server environment returns JSON `503 API_CONFIGURATION_ERROR`; a failed runtime dependency load returns `503 API_DEPENDENCY_ERROR`; other initialization failures return `503 API_INITIALIZATION_ERROR`. Once initialized, `/api/health` reports database connection failures as JSON `503 DATABASE_UNAVAILABLE`. These responses are distinct from an unknown API route (`404 NOT_FOUND`) and from the SPA fallback. Function logs include only sanitized error categories, codes, and invalid environment variable names, never values or stack traces.
+
+## Vercel Preview environment variables
+
+Vercel supplies the system variables `VERCEL`, `VERCEL_ENV`, and `VERCEL_URL`; do not create or override them. For a Preview deployment, the server uses `https://${VERCEL_URL}` as the exact allowed frontend origin only when `VERCEL=1` and `VERCEL_ENV=preview`. Preview cookies remain Secure, PostgreSQL TLS remains required, and the Vercel pool defaults to two connections. If the Preview is opened through a custom alias instead of its deployment URL, set `FRONTEND_ORIGIN` to that exact HTTPS origin. Wildcard origins are never accepted.
+
+Configure the same database variable names listed below for the **Preview** environment, using a dedicated non-production database with TLS. Do not use `localhost`; a Vercel Function cannot reach PostgreSQL on your Mac. The current linked project has no environment variables configured, so its API is expected to return a JSON configuration error until these Preview values are supplied.
+
 ## Vercel production environment variables
 
 Add these in Vercel Project Settings → Environment Variables. Use the actual stable production domain in the origin value; do not guess it.
@@ -40,7 +48,15 @@ Add these in Vercel Project Settings → Environment Variables. Use the actual s
 
 The origin must exactly match the browser's scheme and hostname. Do not place database credentials in source control, logs, or any `VITE_*` value. The existing pool verifies the database certificate when `PGSSLMODE=require`; do not disable verification to work around TLS errors.
 
+Production must set `FRONTEND_ORIGIN` explicitly to the stable production frontend origin. The application intentionally does not use the deployment-specific `VERCEL_URL` as the Production origin.
+
 Each Vercel function instance has its own PostgreSQL pool. `PGPOOL_MAX=2` caps each instance, but total connections can still increase with instance count. Confirm database connection limits and prefer the provider's supported pooling/proxy option when appropriate.
+
+The Express runtime is memoized once per warm Function instance, and the PostgreSQL pool is a single module-level instance with a bounded maximum. Separate Function instances still create separate pools.
+
+## Native Argon2 verification
+
+`argon2` contains a native Node.js addon. The Vercel build must install/package a binary compatible with the configured Node.js runtime and Linux architecture. A local `npm ci`, local hash test, or successful frontend build does not verify that Preview can hash passwords. After adding Preview database variables, verify signup followed by login against the non-production database and inspect sanitized Function logs for dependency errors. Do not test against Production or expose diagnostic endpoints to probe the addon.
 
 ## Persistent worker environment
 
@@ -52,8 +68,8 @@ The worker requires outbound DNS and HTTP(S) access to monitored public endpoint
 
 1. Verify the PostgreSQL provider, host, port, database, role, certificate chain, and connection limit.
 2. Provision a production database and least-privilege role.
-3. Configure Vercel Production variables and matching database variables on the worker host.
-4. Review the Vercel Preview build and CI checks against a non-production database.
+3. Configure Preview variables against a dedicated non-production database and verify API health, unauthenticated JSON responses, signup/login, monitor CRUD, and manual check/history. This also exercises the native Argon2 addon in the Vercel Function runtime.
+4. Configure Vercel Production variables, including the explicit stable `FRONTEND_ORIGIN`, and matching database variables on the worker host.
 5. Apply migrations only after confirming the migration command's environment points to the intended database. Never run migrations against an unknown `PGDATABASE`.
 6. Deploy the reviewed commit.
 7. Verify `GET /api/health` returns JSON (and database status `ok` when connected). Verify `GET /api/auth/me` returns an API JSON response when unauthenticated, not SPA HTML.
