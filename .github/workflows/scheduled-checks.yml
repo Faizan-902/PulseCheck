@@ -24,6 +24,7 @@ jobs:
       PGPORT: 5432
       PGSSLMODE: require
       PGPOOL_MAX: 2
+      FRONTEND_ORIGIN: https://pulsecheck-seven.vercel.app
       NODE_ENV: production
     steps:
       - name: Check out repository
