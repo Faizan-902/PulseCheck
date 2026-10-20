@@ -58,18 +58,34 @@ The Express runtime is memoized once per warm Function instance, and the Postgre
 
 `argon2` contains a native Node.js addon. The Vercel build must install/package a binary compatible with the configured Node.js runtime and Linux architecture. A local `npm ci`, local hash test, or successful frontend build does not verify that Preview can hash passwords. After adding Preview database variables, verify signup followed by login against the non-production database and inspect sanitized Function logs for dependency errors. Do not test against Production or expose diagnostic endpoints to probe the addon.
 
-## Persistent worker environment
+## Worker hosting and the free-tier constraint
+
+The worker is a separate long-running process and must never run inside a Vercel Function. There are two supported deployment shapes.
+
+### Persistent worker
 
 Run `npm run start:worker` on a separate persistent Node.js host with a restart policy. Configure it with the same verified database variables and `PGSSLMODE=require`. Also set `NODE_ENV=production`, `FRONTEND_ORIGIN` to the same stable HTTPS origin, `SESSION_COOKIE_SECURE=true`, `SESSION_COOKIE_SAME_SITE=lax`, and an appropriate `PGPOOL_MAX`. The shared environment schema validates production settings in the worker process too.
 
 The worker requires outbound DNS and HTTP(S) access to monitored public endpoints. Confirm the host restarts it if it exits and inspect its logs. A Vercel deployment marked Ready does not prove the worker is running.
+
+Do not use this shape with Neon Free. A persistent worker polls the database at least every 60 seconds (`WORKER_POLL_INTERVAL_MS` maximum), so Neon Free compute never reaches its 5-minute idle timeout. At the 0.25 CU minimum, 24/7 activity is about 180 CU-hours/month against the Free plan's 100 CU-hours, which suspends the project's compute (and the Vercel API) until the next billing period.
+
+### Scheduled one-shot worker on GitHub Actions
+
+`.github/workflows/scheduled-checks.yml` requests a run of `node server/src/worker-once.js` every 15 minutes. Each run claims due endpoints, performs checks, persists results, advances `next_check_at`, releases leases, cleans expired data, and exits. This lets Neon scale to zero between runs. On a public repository, standard GitHub-hosted Actions minutes are free; the repository currently uses this path for Preview.
+
+Set the same `PG*` repository secrets and `PGSSLMODE=require`. The workflow also sets `WORKER_BATCH_SIZE=100`, `PGPOOL_MAX=2`, `NODE_ENV=production`, and HTTPS cookie/origin values. Keep the cadence at 15 minutes: a cadence at or below 5 minutes prevents Neon's 5-minute scale-to-zero and breaks the free-tier budget. An effective 15-minute cadence means sub-15-minute monitoring is not available, and the dashboard's configured 300-second interval is a target rather than a guarantee.
+
+**The cron is a request, not a guarantee.** GitHub treats `schedule` as best-effort and can delay or drop runs. Measured on 2026-10-20 with this `*/15` cron on `main`, GitHub created only three schedule runs between 21:18 and 13:10 UTC (00:34, 05:22, and 10:21 UTC)—roughly one run every five hours, not every 15 minutes. GitHub disables scheduled workflows after 60 days without repository activity.
+
+If the check interval matters, add an external trigger: a free scheduler or uptime service calling the `workflow_dispatch` REST endpoint at the desired cadence, using a fine-grained token scoped to this repository with only Actions write permission. Keep the `schedule` trigger as a fallback. Either way, verify the real cadence with `gh run list --workflow scheduled-checks.yml --event schedule --limit 20` instead of assuming the cron was honoured. The workflow exposes `workflow_dispatch` for manual verification and recovery. A green Vercel deployment does not prove that scheduled checks are running.
 
 ## Rollout checklist
 
 1. Verify the PostgreSQL provider, host, port, database, role, certificate chain, and connection limit.
 2. Provision a production database and least-privilege role.
 3. Configure Preview variables against a dedicated non-production database and verify API health, unauthenticated JSON responses, signup/login, monitor CRUD, and manual check/history. This also exercises the native Argon2 addon in the Vercel Function runtime.
-4. Configure Vercel Production variables, including the explicit stable `FRONTEND_ORIGIN`, and matching database variables on the worker host.
+4. Configure Vercel Production variables, including the explicit stable `FRONTEND_ORIGIN`, and matching database variables on the worker host or in the GitHub Actions secrets used by the scheduled one-shot worker.
 5. Apply migrations only after confirming the migration command's environment points to the intended database. Never run migrations against an unknown `PGDATABASE`.
 6. Deploy the reviewed commit.
 7. Verify `GET /api/health` returns JSON (and database status `ok` when connected). Verify `GET /api/auth/me` returns an API JSON response when unauthenticated, not SPA HTML.

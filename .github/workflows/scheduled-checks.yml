@@ -2,6 +2,10 @@ name: Scheduled checks
 
 on:
   schedule:
+    # 15 minutes is intentional. Neon Free suspends compute only after 5 minutes of
+    # inactivity (100 CU-hours/project/month). A cadence at or below 5 minutes keeps the
+    # shared Preview compute awake 24/7 (~180 CU-hours/month), which suspends the database
+    # and the Vercel API until the next billing period. Do not shorten this cron.
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
@@ -21,11 +25,15 @@ jobs:
       PGDATABASE: ${{ secrets.PGDATABASE }}
       PGUSER: ${{ secrets.PGUSER }}
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
-      PGPORT: 5432
+      PGPORT: '5432'
       PGSSLMODE: require
-      PGPOOL_MAX: 2
+      PGPOOL_MAX: '2'
+      PULSECHECK_DISABLE_DOTENV: 'true'
+      WORKER_BATCH_SIZE: '100'
       FRONTEND_ORIGIN: https://pulsecheck-seven.vercel.app
       NODE_ENV: production
+      SESSION_COOKIE_SECURE: 'true'
+      SESSION_COOKIE_SAME_SITE: lax
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
