@@ -8,6 +8,15 @@ import { performHealthCheck } from './services/health-check.js';
 
 const DEFAULT_PORTS = { 'http:': '80', 'https:': '443' };
 
+// Vercel terminates TLS at exactly one edge proxy and appends the caller to
+// X-Forwarded-For. Trusting that single hop makes `request.ip` the real client,
+// so a rate limit applies per client instead of to every client at once.
+// Never use `true`: with multiple hops a caller could spoof the header and
+// either dodge its own bucket or push another client over the limit.
+function defaultTrustProxy() {
+  return process.env.VERCEL === '1' ? 1 : false;
+}
+
 function requestProtocol(request) {
   const forwarded = request.headers['x-forwarded-proto'];
   const candidate = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim().toLowerCase();
@@ -70,9 +79,11 @@ export function createApp({
   loginRateLimit,
   loginRateLimitStore,
   signupRateLimit,
-  signupRateLimitStore
+  signupRateLimitStore,
+  trustProxy = defaultTrustProxy()
 }) {
   const app = express();
+  app.set('trust proxy', trustProxy);
   app.disable('x-powered-by');
   app.use((_request, response, next) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');

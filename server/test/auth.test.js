@@ -227,6 +227,59 @@ describe('authentication API', () => {
     expect(signupRateLimitStore.increment).toHaveBeenCalledTimes(2);
   });
 
+  it('rate limits each client separately behind one proxy hop', async () => {
+    const authModel = makeAuthModel();
+    const app = makeApp(authModel, { loginRateLimit: { windowMs: 60_000, limit: 2 }, trustProxy: 1 });
+    const failedLogin = (ip) => request(app)
+      .post('/api/auth/login')
+      .set('Origin', origin)
+      .set('X-Forwarded-For', ip)
+      .send({ email: 'none@example.com', password: 'incorrect' });
+
+    // One client exhausts its own bucket.
+    expect((await failedLogin('203.0.113.10')).status).toBe(401);
+    expect((await failedLogin('203.0.113.10')).status).toBe(401);
+    expect((await failedLogin('203.0.113.10')).status).toBe(429);
+
+    // A different client must not be locked out by that client's traffic.
+    const otherClient = await failedLogin('198.51.100.5');
+    expect(otherClient.status).toBe(401);
+    expect(otherClient.body.error?.code).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('does not let a client dodge its bucket by spoofing an earlier proxy entry', async () => {
+    const app = makeApp(makeAuthModel(), { loginRateLimit: { windowMs: 60_000, limit: 2 }, trustProxy: 1 });
+    const failedLogin = (forwardedFor) => request(app)
+      .post('/api/auth/login')
+      .set('Origin', origin)
+      .set('X-Forwarded-For', forwardedFor)
+      .send({ email: 'none@example.com', password: 'incorrect' });
+
+    // Vercel appends the real client address; only that last hop is trusted, so
+    // arbitrary values prepended by the client share one bucket.
+    expect((await failedLogin('1.1.1.1, 203.0.113.10')).status).toBe(401);
+    expect((await failedLogin('2.2.2.2, 203.0.113.10')).status).toBe(401);
+    expect((await failedLogin('3.3.3.3, 203.0.113.10')).status).toBe(429);
+  });
+
+  it('trusts exactly one proxy hop on Vercel and no proxy elsewhere', () => {
+    const previous = process.env.VERCEL;
+    try {
+      process.env.VERCEL = '1';
+      const onVercel = makeApp(makeAuthModel());
+      // A single hop means only the address Vercel appended is trusted, so a
+      // caller cannot spoof X-Forwarded-For to escape its own bucket.
+      expect(onVercel.get('trust proxy')).toBe(1);
+
+      delete process.env.VERCEL;
+      const offVercel = makeApp(makeAuthModel());
+      expect(offVercel.get('trust proxy')).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.VERCEL;
+      else process.env.VERCEL = previous;
+    }
+  });
+
   it('sets baseline response security headers', async () => {
     const response = await request(makeApp(makeAuthModel())).get('/api/health');
 
