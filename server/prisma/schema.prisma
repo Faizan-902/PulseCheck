@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MonitoredEndpoint {
+  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId               String?       @map("owner_id") @db.Uuid
+  name                  String        @db.VarChar(100)
+  url                   String
+  timeoutMs             Int           @default(5000) @map("timeout_ms")
+  isActive              Boolean       @default(true) @map("is_active")
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  checkIntervalSeconds  Int           @default(300) @map("check_interval_seconds")
+  nextCheckAt           DateTime      @default(now()) @map("next_check_at") @db.Timestamptz(6)
+  checkLeaseUntil       DateTime?     @map("check_lease_until") @db.Timestamptz(6)
+  checkLeaseToken       String?       @map("check_lease_token") @db.Uuid
+  owner                 User?         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  checkResults          CheckResult[]
+  incidents             Incident[]
+
+  @@index([createdAt(sort: Desc)], map: "monitored_endpoints_created_at_idx")
+  @@index([isActive, createdAt(sort: Desc)], map: "monitored_endpoints_active_idx")
+  @@index([nextCheckAt, id], map: "monitored_endpoints_due_idx")
+  @@index([checkLeaseUntil], map: "monitored_endpoints_lease_idx")
+  @@index([ownerId, createdAt(sort: Desc)], map: "monitored_endpoints_owner_created_idx")
+  @@map("monitored_endpoints")
+}
+
+model CheckResult {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  endpointId  String            @map("endpoint_id") @db.Uuid
+  checkedAt   DateTime          @default(now()) @map("checked_at") @db.Timestamptz(6)
+  status      String            @db.VarChar(4)
+  httpStatus  Int?              @map("http_status") @db.SmallInt
+  latencyMs   Int?              @map("latency_ms")
+  errorType   String?           @map("error_type") @db.VarChar(40)
+  checkSource String            @default("MANUAL") @map("check_source") @db.VarChar(10)
+  endpoint    MonitoredEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, checkedAt(sort: Desc)], map: "check_results_endpoint_checked_at_idx")
+  @@index([status, checkedAt(sort: Desc)], map: "check_results_status_checked_at_idx")
+  @@map("check_results")
+}
+
+model Incident {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  endpointId String            @map("endpoint_id") @db.Uuid
+  openedAt   DateTime          @default(now()) @map("opened_at") @db.Timestamptz(6)
+  resolvedAt DateTime?         @map("resolved_at") @db.Timestamptz(6)
+  endpoint   MonitoredEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, openedAt(sort: Desc)], map: "incidents_endpoint_opened_at_idx")
+  @@map("incidents")
+}
+
+model User {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String        @db.VarChar(100)
+  email        String        @db.VarChar(320)
+  passwordHash String        @map("password_hash")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  sessions     UserSession[]
+  endpoints    MonitoredEndpoint[]
+
+  @@map("users")
+}
+
+model UserSession {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @unique @map("token_hash") @db.Char(64)
+  csrfToken String   @map("csrf_token") @db.VarChar(43)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt], map: "user_sessions_user_expires_idx")
+  @@index([expiresAt], map: "user_sessions_expires_idx")
+  @@map("user_sessions")
+}
+
+model LoginRateLimit {
+  keyHash String   @id @map("key_hash") @db.Char(64)
+  hits    Int
+  resetAt DateTime @map("reset_at") @db.Timestamptz(6)
+
+  @@index([resetAt], map: "login_rate_limits_reset_at_idx")
+  @@map("login_rate_limits")
+}

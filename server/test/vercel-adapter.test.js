@@ -4,13 +4,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { pool } from '../src/runtime.js';
+import { prisma } from '../src/runtime.js';
 import apiHandler, { createApiHandler } from '../../api/index.js';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 afterAll(async () => {
-  await pool.end();
+  await prisma.$disconnect();
 });
 
 function captureRequestApp() {

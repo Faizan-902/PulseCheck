@@ -1,12 +1,12 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
-import { pool } from './db/pool.js';
+import { prisma } from './db/prisma.js';
 import { createEndpointModel } from './models/endpoint-model.js';
 import { createAuthModel } from './models/auth-model.js';
 import { createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
 
-const model = createEndpointModel(pool);
-const authModel = createAuthModel(pool);
+const model = createEndpointModel(prisma);
+const authModel = createAuthModel(prisma);
 
 export const app = createApp({
   model,
@@ -16,9 +16,9 @@ export const app = createApp({
   cookieSecure: env.SESSION_COOKIE_SECURE,
   cookieSameSite: env.SESSION_COOKIE_SAME_SITE,
   sessionTtlHours: env.AUTH_SESSION_TTL_HOURS,
-  loginRateLimitStore: createPostgresRateLimitStore(pool, 'login'),
-  signupRateLimitStore: createPostgresRateLimitStore(pool, 'signup')
+  loginRateLimitStore: createPostgresRateLimitStore(prisma, 'login'),
+  signupRateLimitStore: createPostgresRateLimitStore(prisma, 'signup')
 });
 
-export { pool };
+export { prisma };
 export default app;

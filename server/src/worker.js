@@ -1,5 +1,5 @@
 import { env } from './config/env.js';
-import { pool } from './db/pool.js';
+import { closePrisma, connectPrisma, prisma } from './db/prisma.js';
 import { createEndpointModel } from './models/endpoint-model.js';
 import { createAuthModel } from './models/auth-model.js';
 import { createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
@@ -7,9 +7,9 @@ import { performHealthCheck } from './services/health-check.js';
 import { runWorkerCycle } from './services/monitor-worker.js';
 import { cleanupExpiredData } from './services/data-retention.js';
 
-const model = createEndpointModel(pool);
-const authModel = createAuthModel(pool);
-const rateLimitStore = createPostgresRateLimitStore(pool, 'maintenance');
+const model = createEndpointModel(prisma);
+const authModel = createAuthModel(prisma);
+const rateLimitStore = createPostgresRateLimitStore(prisma, 'maintenance');
 const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const CLEANUP_BATCH_SIZE = 500;
 const CLEANUP_MAX_BATCHES = 4;
@@ -61,7 +61,7 @@ async function shutdown(signal) {
   clearTimeout(timer);
   console.log(`Received ${signal}; stopping monitoring worker.`);
   await Promise.allSettled([activeCycle, activeCleanup].filter(Boolean));
-  await pool.end();
+  await closePrisma();
   process.exit(0);
 }
 
@@ -69,11 +69,11 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 try {
-  await model.ping();
+  await connectPrisma();
   console.log('PulseCheck monitoring worker started.');
   await poll();
 } catch (error) {
   console.error('Monitoring worker could not connect to PostgreSQL:', error.message);
-  await pool.end();
+  await closePrisma();
   process.exit(1);
 }

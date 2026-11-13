@@ -8,6 +8,7 @@
     "client"
   ],
   "scripts": {
+    "postinstall": "npm --workspace server run prisma:generate",
     "start": "npm --workspace server start",
     "dev:server": "npm --workspace server run dev",
     "dev:client": "npm --workspace client run dev",
@@ -19,6 +20,6 @@
     "build": "npm --workspace client run build"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.18"
   }
 }

@@ -3,6 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../src/generated/prisma/client.ts';
 import request from 'supertest';
 import { env } from '../src/config/env.js';
 import { createApp } from '../src/app.js';
@@ -34,14 +36,16 @@ const connectionOptions = {
 const adminPool = new Pool(connectionOptions);
 const poolOne = new Pool({ ...connectionOptions, options: `-c search_path=${schema},public` });
 const poolTwo = new Pool({ ...connectionOptions, options: `-c search_path=${schema},public` });
-const modelOne = createEndpointModel(poolOne);
-const modelTwo = createEndpointModel(poolTwo);
-const authModel = createAuthModel(poolOne);
-const authModelTwo = createAuthModel(poolTwo);
-const rateLimitStoreOne = createPostgresRateLimitStore(poolOne);
-const rateLimitStoreTwo = createPostgresRateLimitStore(poolTwo);
-const signupRateLimitStoreOne = createPostgresRateLimitStore(poolOne, 'signup');
-const signupRateLimitStoreTwo = createPostgresRateLimitStore(poolTwo, 'signup');
+const prismaOne = new PrismaClient({ adapter: new PrismaPg(poolOne, { schema }) });
+const prismaTwo = new PrismaClient({ adapter: new PrismaPg(poolTwo, { schema }) });
+const modelOne = createEndpointModel(prismaOne);
+const modelTwo = createEndpointModel(prismaTwo);
+const authModel = createAuthModel(prismaOne);
+const authModelTwo = createAuthModel(prismaTwo);
+const rateLimitStoreOne = createPostgresRateLimitStore(prismaOne);
+const rateLimitStoreTwo = createPostgresRateLimitStore(prismaTwo);
+const signupRateLimitStoreOne = createPostgresRateLimitStore(prismaOne, 'signup');
+const signupRateLimitStoreTwo = createPostgresRateLimitStore(prismaTwo, 'signup');
 const authApp = createApp({
   model: modelOne,
   authModel,
@@ -138,6 +142,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  await Promise.all([prismaOne.$disconnect(), prismaTwo.$disconnect()]);
   await Promise.all([poolOne.end(), poolTwo.end()]);
   if (schemaCreated) await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
   await adminPool.end();

@@ -1,81 +1,66 @@
-export function createAuthModel(pool) {
+export function createAuthModel(prisma) {
   return {
     async createUserAndSession({ name, email, passwordHash, tokenHash, csrfToken, expiresAt }) {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        const userResult = await client.query(
-          `INSERT INTO users (name, email, password_hash)
-           VALUES ($1, $2, $3)
-           RETURNING id, name, email, created_at AS "createdAt"`,
-          [name, email, passwordHash]
-        );
-        const user = userResult.rows[0];
-        await client.query(
-          `INSERT INTO user_sessions (user_id, token_hash, csrf_token, expires_at)
-           VALUES ($1, $2, $3, $4)`,
-          [user.id, tokenHash, csrfToken, expiresAt]
-        );
-        await client.query('COMMIT');
+      return prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            name,
+            email,
+            passwordHash,
+            sessions: { create: { tokenHash, csrfToken, expiresAt } }
+          },
+          select: { id: true, name: true, email: true, createdAt: true }
+        });
         return user;
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      });
     },
 
     async findUserByEmail(email) {
-      const result = await pool.query(
-        `SELECT id, name, email, password_hash AS "passwordHash",
-                created_at AS "createdAt"
-         FROM users WHERE lower(email) = lower($1)`,
-        [email]
-      );
-      return result.rows[0] ?? null;
+      return prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        select: { id: true, name: true, email: true, passwordHash: true, createdAt: true }
+      });
     },
 
     async createSession({ userId, tokenHash, csrfToken, expiresAt }) {
-      await pool.query(
-        `INSERT INTO user_sessions (user_id, token_hash, csrf_token, expires_at)
-         VALUES ($1, $2, $3, $4)`,
-        [userId, tokenHash, csrfToken, expiresAt]
-      );
+      await prisma.userSession.create({
+        data: { userId, tokenHash, csrfToken, expiresAt }
+      });
     },
 
     async findSessionByTokenHash(tokenHash) {
-      const result = await pool.query(
-        `SELECT session.user_id AS "userId", session.csrf_token AS "csrfToken",
-                users.name, users.email
-         FROM user_sessions AS session
-         JOIN users ON users.id = session.user_id
-         WHERE session.token_hash = $1 AND session.expires_at > NOW()`,
-        [tokenHash]
-      );
-      return result.rows[0] ?? null;
+      const session = await prisma.userSession.findFirst({
+        where: { tokenHash, expiresAt: { gt: new Date() } },
+        select: { csrfToken: true, user: { select: { id: true, name: true, email: true } } }
+      });
+      if (!session) return null;
+      return {
+        userId: session.user.id,
+        csrfToken: session.csrfToken,
+        name: session.user.name,
+        email: session.user.email
+      };
     },
 
     async deleteSession(tokenHash) {
-      await pool.query('DELETE FROM user_sessions WHERE token_hash = $1', [tokenHash]);
+      await prisma.userSession.deleteMany({ where: { tokenHash } });
     },
 
     async deleteExpiredSessionsBatch(limit = 500) {
-      const result = await pool.query(
-        `WITH expired AS (
-           SELECT id FROM user_sessions
-           WHERE expires_at <= clock_timestamp()
-           ORDER BY expires_at, id
-           LIMIT $1
-           FOR UPDATE SKIP LOCKED
-         )
-         DELETE FROM user_sessions AS sessions
-         USING expired
-         WHERE sessions.id = expired.id
-         RETURNING sessions.id`,
-        [limit]
-      );
-      return result.rowCount;
+      const expired = await prisma.$queryRaw`
+        WITH expired AS (
+          SELECT id FROM user_sessions
+          WHERE expires_at <= clock_timestamp()
+          ORDER BY expires_at, id
+          LIMIT ${limit}
+          FOR UPDATE SKIP LOCKED
+        )
+        DELETE FROM user_sessions AS sessions
+        USING expired
+        WHERE sessions.id = expired.id
+        RETURNING sessions.id
+      `;
+      return expired.length;
     }
   };
 }

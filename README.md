@@ -4,7 +4,7 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
 
 ## Requirements
 
-- Node.js 20.19 or newer
+- Node.js 22.18 or newer (the generated Prisma 7 client uses TypeScript ESM)
 - npm 10 or newer
 - PostgreSQL 13 or newer
 
@@ -15,6 +15,8 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
    ```bash
    npm install
    ```
+
+   Installation generates the Prisma client from `server/prisma/schema.prisma`. After changing the schema, regenerate it with `npm --workspace server run prisma:generate`.
 
 2. Create a local environment file and fill in your PostgreSQL settings:
 
@@ -67,12 +69,12 @@ Scheduled one-shot mode is the strict free-tier path. Neon Free includes 100 CU-
 Before deploying, provision:
 
 - A reachable PostgreSQL 13+ database shared by the API and worker. Allow connections from both runtimes and outbound DNS/HTTP(S) from the worker to public monitored endpoints.
-- Either a persistent Node.js 20.19+ worker service running `npm run start:worker`, or the scheduled one-shot `worker-once.js` job. Do not run the polling loop inside a Vercel Function. A persistent worker needs a database plan that tolerates 24/7 compute; Neon Free does not. Configure a supervisor to restart a persistent worker with backoff; the application does not supervise or restart its own worker process.
+- Either a persistent Node.js 22.18+ worker service running `npm run start:worker`, or the scheduled one-shot `worker-once.js` job. Do not run the polling loop inside a Vercel Function. A persistent worker needs a database plan that tolerates 24/7 compute; Neon Free does not. Configure a supervisor to restart a persistent worker with backoff; the application does not supervise or restart its own worker process.
 - If operating outside the Vercel architecture, a persistent Node.js service for the Express API with the host-supplied `PORT` and `HOST=0.0.0.0`. Vercel's request Function is an alternative for the API, not the long-lived worker.
 
 Configure the API and worker with `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` as platform-managed environment variables or secrets. A non-empty `PGPASSWORD` is required in production; an empty password remains supported for local passwordless PostgreSQL. Production startup requires `PGSSLMODE=require`; the pool verifies the server certificate. `PGSSLMODE=disable` is intended for local PostgreSQL. Set `FRONTEND_ORIGIN` to the frontend's exact HTTPS origin (scheme and hostname, with a port only when applicable). Production startup rejects localhost frontend origins and insecure session-cookie configuration. `SESSION_COOKIE_SECURE` defaults to true in production; set `SESSION_COOKIE_SAME_SITE=none` as well when the frontend and API are on different sites. `HOST` defaults to `0.0.0.0` in production and `127.0.0.1` locally. Do not put production credentials in the repository or frontend environment: values prefixed with `VITE_` are compiled into public browser assets.
 
-Use the same database credentials for a one-off migration/release command and for both runtime services. The repository does not identify the deployed database target, so verify the deployment's `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` before applying migrations. From the repository root, run `npm run migrate` after injecting those verified target settings into the command environment. Do not run it with production credentials during local verification. The migration runner is safe to rerun and serializes concurrent migration commands with a PostgreSQL advisory lock. Migration `007_allow_unavailable_latency.sql` is discovered in numeric filename order and applied through that runner. Start the API with `npm start` and either start the worker with `npm run start:worker` as a separate long-running service or run the scheduled one-shot workflow described above. The API exposes `GET /api/health`, which includes a database connectivity check; configure the platform's readiness probe to use it. The PostgreSQL pool size is controlled by `PGPOOL_MAX` (1–10); it defaults to 2 in Vercel Function instances and 10 in other runtimes. Each serverless instance has its own pool, so estimate aggregate connections and use the database provider's supported pooler if needed. Both processes close their PostgreSQL pools on `SIGTERM`/`SIGINT`; allow enough termination grace time for in-flight requests or worker checks to finish.
+Use the same database credentials for a one-off migration/release command and for both runtime services. The repository does not identify the deployed database target, so verify the deployment's `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` before applying migrations. From the repository root, run `npm run migrate` after injecting those verified target settings into the command environment. Do not run it with production credentials during local verification. The migration runner is safe to rerun and serializes concurrent migration commands with a PostgreSQL advisory lock. Migration `007_allow_unavailable_latency.sql` is discovered in numeric filename order and applied through that runner. Start the API with `npm start` and either start the worker with `npm run start:worker` as a separate long-running service or run the scheduled one-shot workflow described above. The API exposes `GET /api/health`, which includes a database connectivity check; configure the platform's readiness probe to use it. Prisma 7 uses `@prisma/adapter-pg` and the existing `PG*` environment variables. The pool size is controlled by `PGPOOL_MAX` (1–10); it defaults to 2 in Vercel Function instances and 10 in other runtimes. Each serverless instance has its own pool, so estimate aggregate connections and use the database provider's supported pooler if needed. The API and worker disconnect their Prisma clients on `SIGTERM`/`SIGINT`; allow enough termination grace time for in-flight requests or worker checks to finish. The standalone SQL migration runner continues to use `pg` for existing migrations and advisory locking.
 
 The worker also performs expired-data cleanup every 15 minutes. Each cleanup statement deletes at most 500 expired sessions or rate-limit rows using ordered row locks with `SKIP LOCKED`; at most four batches per table run in one cleanup cycle. If a full backlog remains, it continues on the next worker cycle. Cleanup requires the worker (persistent or scheduled one-shot) to run; the API does not run it. Signup currently returns `409 EMAIL_IN_USE` for an already registered address. This provides a clear account-creation error but permits email enumeration; this UX/privacy tradeoff is retained pending a product decision, and the public signup response is unchanged.
 
@@ -170,10 +172,10 @@ npm run build
 
 ## Code map
 
-- `server/src/config/env.js` loads and validates the environment; `server/src/db/pool.js` owns the PostgreSQL connection pool.
+- `server/src/config/env.js` loads and validates the environment; `server/src/db/prisma.js` owns the Prisma client and PostgreSQL adapter. `server/prisma/schema.prisma` maps the existing SQL schema. `server/src/db/pool.js` remains for the SQL migration runner.
 - `server/migrations/` defines users, sessions, endpoint ownership, check results, scheduling, incidents, and lease fencing; `server/src/db/migrate.js` applies and tracks those SQL files.
 - `server/src/validation/schemas.js` contains the Zod request schemas; `server/src/routes/` maps URLs to controllers; `server/src/controllers/` coordinates validation, models, and services.
-- `server/src/models/endpoint-model.js` contains parameterized SQL, due-check claims, scheduled result persistence, and incident transitions.
+- `server/src/models/endpoint-model.js` uses Prisma CRUD and transactions for endpoint, check, and incident operations; tagged PostgreSQL queries preserve `SKIP LOCKED` claims and fencing behavior.
 - `server/src/models/auth-model.js`, `server/src/middleware/authentication.js`, and `server/src/controllers/auth-controller.js` implement persistent sessions, CSRF validation, and account authentication.
 - `server/src/security/target-url.js` validates public destinations and pins the HTTP connection to vetted DNS answers; `server/src/services/health-check.js` handles redirects, timeouts, latency, and UP/DOWN classification.
 - `server/src/app.js` assembles middleware and routes; `server/src/index.js` starts the API; `server/src/worker.js` starts the separate worker process.
@@ -184,7 +186,7 @@ npm run build
 
 1. The dashboard sends a registration request to the API.
 2. Zod checks the body. The network-safety layer resolves the target and rejects non-public addresses before the endpoint is stored.
-3. The repository inserts the endpoint with a parameterized PostgreSQL query.
+3. The repository inserts the endpoint through Prisma Client.
 4. A manual check loads that endpoint, resolves and validates it again, connects to a pinned address, applies the timeout, follows only validated redirects, and measures elapsed time.
 5. The repository inserts an `UP` or `DOWN` row in `check_results`. The dashboard refreshes the endpoint list and can load recent checks and incident history.
 6. The separate worker polls due endpoints, checks them using the same safety-checked service, and advances each endpoint's next scheduled time.
