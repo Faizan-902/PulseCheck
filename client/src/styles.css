@@ -538,6 +538,7 @@ select:focus-visible, [tabindex="-1"]:focus-visible { outline: 2px solid var(--f
 .latency-line { fill: none; stroke: #91aaff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; transition: d .25s ease; }
 .latency-point { cursor: crosshair; outline: none; }
 .latency-point circle, .latency-point path { fill: #9db4ff; stroke: #151a22; stroke-width: 2; vector-effect: non-scaling-stroke; transition: r .14s ease, fill .14s ease; }
+.latency-point.point-up circle, .latency-point.point-up path { fill: #71d2a6; }
 .latency-point.point-down circle, .latency-point.point-down path { fill: #f2767b; }
 .latency-point.point-unknown circle, .latency-point.point-unknown path { fill: #e8b76a; }
 .latency-point:hover circle, .latency-point:hover path, .latency-point:focus circle, .latency-point:focus path { r: 6.5px; stroke: #e1e8fb; stroke-width: 2.5; }
@@ -549,6 +550,7 @@ select:focus-visible, [tabindex="-1"]:focus-visible { outline: 2px solid var(--f
 .tooltip-status i, .latency-legend i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: currentColor; }
 .tooltip-status.tooltip-down { color: #f18489; }
 .tooltip-up { color: #69d2a2; }
+.tooltip-status.tooltip-unknown { color: #e8b76a; }
 .latency-legend { display: flex; align-items: center; gap: 17px; min-height: 40px; color: #9da6b3; border-top: 1px solid var(--line-soft); font-size: 9px; }
 .latency-legend > span:not(.latency-range) { display: inline-flex; align-items: center; gap: 6px; }
 .latency-legend .legend-up { color: #71d2a6; }

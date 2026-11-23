@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { buildLatencyChart } from '../latency-series.js';
 
 function fullTimestamp(value) {
@@ -8,34 +8,42 @@ function fullTimestamp(value) {
   }).format(new Date(value));
 }
 
-function axisTimestamp(value) {
+function axisTimestamp(value, span = Infinity) {
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
-    minute: '2-digit'
+    minute: '2-digit',
+    ...(span < 10 * 60_000 ? { second: '2-digit' } : {}),
+    ...(span < 10_000 ? { fractionalSecondDigits: 3 } : {})
   }).format(new Date(value));
 }
 
 export function LatencyChart({ checks, loading, error, onRetry }) {
   const [activePoint, setActivePoint] = useState(null);
   const chartContainerRef = useRef(null);
-  const [dimensions, setDimensions] = useState({ width: 1, height: 280 });
-  const chart = useMemo(() => buildLatencyChart(checks, dimensions.width, dimensions.height), [checks, dimensions]);
+  const [dimensions, setDimensions] = useState(null);
+  const chart = useMemo(
+    () => buildLatencyChart(checks, dimensions?.width, dimensions?.height),
+    [checks, dimensions]
+  );
+  const hasPoints = chart.points.length > 0;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = chartContainerRef.current;
     if (!container) return undefined;
     const updateDimensions = () => {
-      const width = Math.max(1, Math.round(container.clientWidth));
-      const height = Math.max(1, Math.round(container.clientHeight));
-      setDimensions((current) => current.width === width && current.height === height ? current : { width, height });
+      const { clientWidth: width, clientHeight: height } = container;
+      if (!width || !height) return;
+      setDimensions((current) =>
+        current?.width === width && current.height === height ? current : { width, height }
+      );
     };
     updateDimensions();
     const observer = new ResizeObserver(updateDimensions);
     observer.observe(container);
     return () => observer.disconnect();
-  }, []);
+  }, [hasPoints]);
 
   if (loading && !checks.length) {
     return <div className="latency-skeleton" role="status" aria-label="Loading persisted check history">
@@ -45,12 +53,15 @@ export function LatencyChart({ checks, loading, error, onRetry }) {
   if (error && !checks.length) {
     return <div className="latency-state latency-error" role="alert"><span>{error}</span><button className="text-button" type="button" onClick={onRetry}>Try again</button></div>;
   }
-  if (!chart.points.length) {
+  if (!hasPoints) {
     return <div className="latency-state latency-empty"><span className="chart-empty-mark" aria-hidden="true">↗</span><strong>No check history yet</strong><span>Latency appears here after a manual or scheduled check is saved.</span></div>;
   }
 
   const first = chart.points[0];
   const last = chart.points.at(-1);
+  const timeSpan = last.timestamp - first.timestamp;
+  const plotBottom = chart.height - chart.padding.bottom;
+  const plotRight = chart.width - chart.padding.right;
   const active = activePoint === null ? null : chart.points[activePoint];
   const tooltip = active ? {
     left: `${Math.max(80, Math.min(chart.width - 80, active.x))}px`,
@@ -64,25 +75,25 @@ export function LatencyChart({ checks, loading, error, onRetry }) {
         {chart.ticks.map((tick) => {
           const y = chart.padding.top + chart.plotHeight * (1 - tick / chart.axisMaximum);
           return <g key={tick} className="latency-grid-row">
-            <line x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={y} y2={y} />
-            <text x={chart.padding.left - 12} y={y + 4} textAnchor="end">{tick} ms</text>
+            <line x1={chart.padding.left} x2={plotRight} y1={y} y2={y} />
+            <text x={chart.padding.left - 12} y={y + 4} textAnchor="end">{tick.toLocaleString()}</text>
           </g>;
         })}
-        <line className="latency-axis-line" x1={chart.padding.left} x2={chart.padding.left} y1={chart.padding.top} y2={chart.height - chart.padding.bottom} />
-        <line className="latency-axis-line" x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={chart.height - chart.padding.bottom} y2={chart.height - chart.padding.bottom} />
-        <text className="latency-axis-title" transform={`translate(17 ${chart.height / 2}) rotate(-90)`} textAnchor="middle">Latency (ms)</text>
-        <text className="latency-axis-title" x={chart.width - chart.padding.right} y={chart.height - 8} textAnchor="end">Time</text>
+        <line className="latency-axis-line" x1={chart.padding.left} x2={chart.padding.left} y1={chart.padding.top} y2={plotBottom} />
+        <line className="latency-axis-line" x1={chart.padding.left} x2={plotRight} y1={plotBottom} y2={plotBottom} />
+        <text className="latency-axis-title" x={chart.padding.left} y={12}>Latency (ms)</text>
+        <text className="latency-axis-title" x={(chart.padding.left + plotRight) / 2} y={chart.height - 8} textAnchor="middle">Time</text>
         {chart.segments.map((segment, index) => segment.length > 1 && <path
           key={`segment-${index}`}
           className="latency-line"
           d={segment.map((point, pointIndex) => `${pointIndex ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ')}
         />)}
         {chart.points.map((point, index) => {
-          const isDown = point.status === 'DOWN';
+          const statusClass = point.status.toLowerCase();
           const label = `${point.status} · ${point.latencyMs === null ? 'latency unavailable' : `${point.latencyMs} ms`} · ${fullTimestamp(point.checkedAt)}`;
           return <g
             key={point.id || `${point.timestamp}-${index}`}
-            className={`latency-point ${isDown ? 'point-down' : point.unavailable ? 'point-unknown' : ''}`}
+            className={`latency-point point-${statusClass}`}
             tabIndex="0"
             role="img"
             aria-label={label}
@@ -96,16 +107,25 @@ export function LatencyChart({ checks, loading, error, onRetry }) {
             <title>{label}</title>
           </g>;
         })}
-        <text className="latency-time-label" x={first.x} y={chart.height - chart.padding.bottom + 20} textAnchor="start">{axisTimestamp(first.checkedAt)}</text>
-        <text className="latency-time-label" x={last.x} y={chart.height - chart.padding.bottom + 20} textAnchor="end">{axisTimestamp(last.checkedAt)}</text>
+        {chart.timeTicks.map(({ timestamp, x }, index) => {
+          const atEdge = chart.timeTicks.length > 1;
+          const anchor = atEdge && index === 0
+            ? 'start'
+            : atEdge && index === chart.timeTicks.length - 1 ? 'end' : 'middle';
+          return (
+            <text key={timestamp} className="latency-time-label" x={x} y={plotBottom + 20} textAnchor={anchor}>
+              {axisTimestamp(timestamp, timeSpan)}
+            </text>
+          );
+        })}
       </svg>
       {active && <div className="latency-tooltip" role="tooltip" style={tooltip}>
-        <span className={`tooltip-status ${active.status === 'DOWN' ? 'tooltip-down' : 'tooltip-up'}`}><i />{active.status}</span>
+        <span className={`tooltip-status tooltip-${active.status.toLowerCase()}`}><i />{active.status}</span>
         <strong>{active.latencyMs === null ? 'Latency unavailable' : `${active.latencyMs} ms`}</strong>
         <time dateTime={active.checkedAt}>{fullTimestamp(active.checkedAt)}</time>
       </div>}
     </div>
-    <div className="latency-legend"><span><i className="legend-up" />Reachable</span><span><i className="legend-down" />Failed check</span><span className="latency-range">{chart.points.length} persisted results · {axisTimestamp(first.checkedAt)} – {axisTimestamp(last.checkedAt)}</span></div>
+    <div className="latency-legend"><span><i className="legend-up" />Reachable</span><span><i className="legend-down" />Failed check</span><span className="latency-range">{chart.points.length} persisted results · {axisTimestamp(first.checkedAt, timeSpan)}{timeSpan > 0 && ` – ${axisTimestamp(last.checkedAt, timeSpan)}`}</span></div>
   </div>;
 }
 

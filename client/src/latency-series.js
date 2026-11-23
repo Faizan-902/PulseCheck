@@ -26,19 +26,31 @@ function roundedAxisMaximum(maximum) {
 }
 
 export function buildLatencyChart(checks, width = 780, height = 280) {
+  // A hidden or very narrow container must never reverse the time scale.
+  width = Math.max(120, width);
   const series = prepareLatencySeries(checks);
-  if (!series.length) return { points: [], segments: [], ticks: [], width, height };
+  if (!series.length) return { points: [], segments: [], ticks: [], timeTicks: [], width, height };
 
   const padding = { top: 22, right: 18, bottom: 48, left: Math.min(68, Math.max(48, width * 0.18)) };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const minTime = series[0].timestamp;
   const maxTime = series.at(-1).timestamp;
+  const timeSpan = maxTime - minTime;
+  const timeToX = (timestamp) => padding.left + (
+    timeSpan === 0 ? plotWidth / 2 : ((timestamp - minTime) / timeSpan) * plotWidth
+  );
+  const timeIntervals = Math.min(5, Math.max(1, Math.floor(plotWidth / 155)));
+  const timestamps = timeSpan === 0 ? [minTime] : Array.from(
+    { length: timeIntervals + 1 },
+    (_, index) => minTime + Math.round(timeSpan * index / timeIntervals)
+  );
+  const timeTicks = [...new Set(timestamps)].map((timestamp) => ({ timestamp, x: timeToX(timestamp) }));
   const maxLatency = Math.max(1, ...series.map((point) => point.latencyMs ?? 0));
   const axisMaximum = roundedAxisMaximum(maxLatency);
   const points = series.map((point) => ({
     ...point,
-    x: padding.left + (maxTime === minTime ? plotWidth / 2 : ((point.timestamp - minTime) / (maxTime - minTime)) * plotWidth),
+    x: timeToX(point.timestamp),
     y: padding.top + plotHeight * (1 - (point.latencyMs ?? 0) / axisMaximum),
     unavailable: point.latencyMs === null
   }));
@@ -59,6 +71,7 @@ export function buildLatencyChart(checks, width = 780, height = 280) {
     points,
     segments,
     ticks: [0, axisMaximum / 2, axisMaximum],
+    timeTicks,
     padding,
     plotHeight,
     width,
