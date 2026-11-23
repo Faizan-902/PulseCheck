@@ -220,3 +220,15 @@ Run `npm test` with a dedicated `*_test` PostgreSQL database configured through 
 For local development, `npm start` starts the API without a file watcher. Use `npm run dev:server` when automatic restarts are wanted. If a watcher reports `EMFILE`, use `npm start`. If Vite serves stale changes on a restricted filesystem, restart it with `CHOKIDAR_USEPOLLING=true npm run dev:client`.
 
 Confirm `http://localhost:3001/api/health` reports a healthy database before testing account or monitor operations. The dashboard uses `http://localhost:5173` by default.
+
+### Using a local API on a different port
+
+The development proxy targets `http://127.0.0.1:3001` by default. If the API is started separately on port 3002, start the client with:
+
+```bash
+PULSECHECK_DEV_API_TARGET=http://127.0.0.1:3002 npm run dev:client
+```
+
+Restart Vite after changing the proxy target. Run the API and persistent worker in a terminal with public DNS and outbound HTTPS access to monitor public destinations.
+
+Vercel builds run `npm run migrate && npm run build`. Migrations use the database settings of the deployment environment and complete before the frontend build. Confirm those database settings before deploying. The migration runner serializes concurrent runs and skips previously applied migrations.
