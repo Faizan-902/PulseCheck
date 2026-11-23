@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runWorkerOnce } from '../src/services/worker-once.js';
 
+const cutoff = new Date('2026-01-01T00:00:00Z');
+
 function buildDeps(overrides = {}) {
   const model = {
-    claimDueEndpoints: vi.fn().mockResolvedValue([
+    withScheduledRun: vi.fn((run) => run(cutoff)),
+    claimDueEndpoints: vi.fn().mockResolvedValue([]).mockResolvedValueOnce([
       { id: 'endpoint-1', timeoutMs: 1000, leaseToken: 'lease-token-1' }
     ]),
     recordScheduledCheck: vi.fn().mockResolvedValue({ id: 'check-1', status: 'UP' })
@@ -27,7 +30,7 @@ describe('one-shot monitoring worker', () => {
     const result = await runWorkerOnce(deps);
 
     expect(deps.model.claimDueEndpoints).toHaveBeenCalledOnce();
-    expect(deps.model.claimDueEndpoints).toHaveBeenCalledWith(10);
+    expect(deps.model.claimDueEndpoints).toHaveBeenCalledWith(10, cutoff);
     expect(deps.model.recordScheduledCheck).toHaveBeenCalledOnce();
     expect(deps.authModel.deleteExpiredSessionsBatch).toHaveBeenCalled();
     expect(deps.rateLimitStore.deleteExpiredBatch).toHaveBeenCalled();
@@ -43,12 +46,27 @@ describe('one-shot monitoring worker', () => {
 
     await runWorkerOnce({ ...deps, batchSize: 3 });
 
-    expect(deps.model.claimDueEndpoints).toHaveBeenCalledWith(3);
+    expect(deps.model.claimDueEndpoints).toHaveBeenCalledWith(3, cutoff);
+  });
+
+  it('drains multiple batches with one cutoff and bounded concurrency', async () => {
+    const deps = buildDeps();
+    deps.model.claimDueEndpoints.mockResolvedValueOnce([
+      { id: 'endpoint-2', timeoutMs: 1000, leaseToken: 'lease-token-2' }
+    ]);
+
+    const result = await runWorkerOnce({ ...deps, batchSize: 1, minIntervalSeconds: 900 });
+
+    expect(result.checks).toBe(2);
+    expect(deps.model.claimDueEndpoints.mock.calls).toEqual([[1, cutoff], [1, cutoff], [1, cutoff]]);
+    expect(deps.model.recordScheduledCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ endpointId: 'endpoint-2' }), { cutoff, minIntervalSeconds: 900 }
+    );
   });
 
   it('still expires stale data when nothing is due', async () => {
     const deps = buildDeps();
-    deps.model.claimDueEndpoints.mockResolvedValue([]);
+    deps.model.claimDueEndpoints.mockReset().mockResolvedValue([]);
 
     const result = await runWorkerOnce(deps);
 

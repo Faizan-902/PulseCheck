@@ -1,5 +1,11 @@
-export async function runWorkerCycle({ model, checkEndpoint, resolver, batchSize = 10, logger = console }) {
-  const endpoints = await model.claimDueEndpoints(batchSize);
+export async function runWorkerCycle(options) {
+  return (await runWorkerBatch(options)).checks;
+}
+
+export async function runWorkerBatch({ model, checkEndpoint, resolver, batchSize = 10, logger = console, scheduling }) {
+  const endpoints = scheduling
+    ? await model.claimDueEndpoints(batchSize, scheduling.cutoff)
+    : await model.claimDueEndpoints(batchSize);
   const checkEndpointOnce = async (endpoint) => {
     let check;
     try {
@@ -10,7 +16,10 @@ export async function runWorkerCycle({ model, checkEndpoint, resolver, batchSize
     }
 
     try {
-      return await model.recordScheduledCheck({ endpointId: endpoint.id, leaseToken: endpoint.leaseToken, ...check });
+      const result = { endpointId: endpoint.id, leaseToken: endpoint.leaseToken, ...check };
+      return scheduling
+        ? await model.recordScheduledCheck(result, scheduling)
+        : await model.recordScheduledCheck(result);
     } catch (error) {
       logger.error(`Could not persist scheduled check for ${endpoint.id}: ${error.message}`);
       throw error;
@@ -25,5 +34,6 @@ export async function runWorkerCycle({ model, checkEndpoint, resolver, batchSize
     throw new AggregateError(failures.map((result) => result.reason), 'One or more scheduled checks failed to persist.');
   }
 
-  return settled.map((result) => result.value).filter(Boolean);
+  const checks = settled.map((result) => result.value).filter(Boolean);
+  return { checks, claimed: endpoints.length };
 }

@@ -17,6 +17,7 @@ try {
     checkEndpoint: performHealthCheck,
     authModel,
     rateLimitStore,
+    minIntervalSeconds: env.MIN_EFFECTIVE_INTERVAL_SECONDS,
     batchSize: env.WORKER_BATCH_SIZE
   });
   await pool.end();

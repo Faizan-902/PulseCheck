@@ -19,7 +19,7 @@ export function createEndpointsRouter(dependencies) {
   const router = Router();
   const controller = createEndpointController(dependencies);
 
-  router.post('/', dependencies.authentication.requireCsrf, validate(registerEndpointSchema, 'body'), controller.create);
+  router.post('/', dependencies.authentication.requireCsrf, validate(registerEndpointSchema(dependencies.scheduling), 'body'), controller.create);
   router.get('/', controller.list);
   router.get('/:id', validate(endpointIdSchema, 'params'), controller.get);
   router.delete('/:id', dependencies.authentication.requireCsrf, validate(endpointIdSchema, 'params'), controller.remove);

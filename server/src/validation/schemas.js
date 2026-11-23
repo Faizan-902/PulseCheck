@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { schedulingPolicy } from '../config/scheduling.js';
 
 const emailSchema = z.string().trim().email().max(320).transform((value) => value.toLowerCase());
 
@@ -13,7 +14,7 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(128)
 }).strict();
 
-export const registerEndpointSchema = z.object({
+export const registerEndpointSchema = ({ minIntervalSeconds, maxIntervalSeconds } = schedulingPolicy()) => z.object({
   name: z.string().trim().min(1).max(100),
   url: z.string().trim().url().max(2048).superRefine((value, context) => {
     try {
@@ -29,7 +30,9 @@ export const registerEndpointSchema = z.object({
     }
   }),
   timeoutMs: z.coerce.number().int().min(100).max(30000).optional(),
-  checkIntervalSeconds: z.coerce.number().int().min(30).max(86400).optional()
+  checkIntervalSeconds: z.coerce.number().int()
+    .min(minIntervalSeconds, `Use an interval of at least ${minIntervalSeconds} seconds.`)
+    .max(maxIntervalSeconds, `Use an interval of at most ${maxIntervalSeconds} seconds.`).optional()
 }).strict();
 
 export const endpointIdSchema = z.object({ id: z.string().uuid() });

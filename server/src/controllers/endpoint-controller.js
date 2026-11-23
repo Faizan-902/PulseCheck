@@ -1,7 +1,7 @@
 import { AppError } from '../middleware/errors.js';
 import { validateTargetUrl } from '../security/target-url.js';
 
-export function createEndpointController({ model, checkEndpoint, resolver, defaultTimeoutMs }) {
+export function createEndpointController({ model, checkEndpoint, resolver, defaultTimeoutMs, scheduling }) {
   async function requireEndpoint(id, ownerId) {
     const endpoint = await model.findEndpointById(id, ownerId);
     if (!endpoint) throw new AppError(404, 'ENDPOINT_NOT_FOUND', 'The endpoint was not found.');
@@ -16,13 +16,16 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
         name: request.body.name,
         url: target.url.href,
         timeoutMs: request.body.timeoutMs ?? defaultTimeoutMs,
-        checkIntervalSeconds: request.body.checkIntervalSeconds ?? 300
+        checkIntervalSeconds: request.body.checkIntervalSeconds ?? scheduling.defaultIntervalSeconds
       });
       response.status(201).json({ data: endpoint });
     },
 
     async list(request, response) {
-      response.json({ data: await model.listEndpoints(request.user.id) });
+      response.json({
+        data: await model.listEndpoints(request.user.id),
+        meta: { scheduling }
+      });
     },
 
     async get(request, response) {

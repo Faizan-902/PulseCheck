@@ -12,6 +12,7 @@ import { createPostgresRateLimitStore } from '../src/models/postgres-rate-limit-
 import { listMigrationFiles } from '../src/db/migration-files.js';
 import { applyMigrations } from '../src/db/migrate.js';
 import { cleanupExpiredData } from '../src/services/data-retention.js';
+import { runWorkerOnce } from '../src/services/worker-once.js';
 import { runWorkerCycle } from '../src/services/monitor-worker.js';
 
 const { Pool } = pg;
@@ -360,6 +361,44 @@ describe('PostgreSQL scheduled monitoring integration', () => {
     expect(checks.rows[0].count).toBe(0);
     expect(incidents.rows[0].count).toBe(0);
     expect(await modelOne.findEndpointById(endpoint.id, ownerId)).toBeNull();
+  });
+
+  it('checks only due active rows, honours the hosted floor and skips an overlapping one-shot', async () => {
+    const due = await createEndpoint('Due at launch');
+    const fixture = await poolOne.query(
+      `INSERT INTO monitored_endpoints (name, url, next_check_at, is_active)
+       VALUES ('Later', 'https://example.org', NOW() + INTERVAL '1 hour', TRUE),
+              ('Inactive', 'https://example.org', NOW(), FALSE)
+       RETURNING id`
+    );
+    const ids = fixture.rows.map(({ id }) => id);
+    const entered = Promise.withResolvers();
+    const resume = Promise.withResolvers();
+    const args = {
+      authModel, rateLimitStore: rateLimitStoreOne, batchSize: 1, minIntervalSeconds: 900,
+      logger: { log() {}, error() {} },
+      async checkEndpoint(endpoint) {
+        entered.resolve(endpoint.id);
+        await resume.promise;
+        return { status: 'UP', httpStatus: 200, latencyMs: 12, errorType: null };
+      }
+    };
+
+    const first = runWorkerOnce({ ...args, model: modelOne });
+    try {
+      expect(await Promise.race([entered.promise, first])).toBe(due.id);
+      expect(await runWorkerOnce({ ...args, model: modelTwo })).toMatchObject({ skipped: true, checks: 0 });
+    } finally {
+      resume.resolve();
+      await first;
+      await poolOne.query('DELETE FROM monitored_endpoints WHERE id = ANY($1::uuid[])', [ids]);
+    }
+
+    expect((await first).checks).toBe(1);
+    const after = await modelOne.findEndpointById(due.id, ownerId);
+    expect(after.nextCheckAt.getTime() - Date.now()).toBeGreaterThan(890_000);
+    expect(await runWorkerOnce({ ...args, model: modelTwo })).toMatchObject({ checks: 0 });
+    expect(await modelOne.listChecks(due.id, 50, ownerId)).toHaveLength(1);
   });
 
   it('claims a due endpoint once across separate PostgreSQL connections', async () => {

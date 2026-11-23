@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { schedulingPolicy } from '../src/config/scheduling.js';
 
 const endpointId = '1d7f9e6e-2dce-4e1a-8930-9651dfbd4b7c';
 const checkId = 'ae2dad26-3305-411e-91f0-08d04fc8c2e5';
@@ -94,6 +95,7 @@ describe('PulseCheck API', () => {
       resolver: publicResolver,
       checkEndpoint,
       defaultTimeoutMs: 5000,
+      scheduling: schedulingPolicy('worker'),
       frontendOrigin
     });
     testApp = app;

@@ -2,6 +2,9 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import {
+  MAX_INTERVAL_SECONDS, MIN_EFFECTIVE_INTERVAL_SECONDS, MIN_WORKER_INTERVAL_SECONDS
+} from './scheduling.js';
 
 const projectEnvPath = resolve(fileURLToPath(new URL('../../../.env', import.meta.url)));
 if (process.env.PULSECHECK_DISABLE_DOTENV !== 'true') {
@@ -34,6 +37,9 @@ const envSchema = z.object({
   SESSION_COOKIE_SAME_SITE: z.enum(['strict', 'lax', 'none']).default('lax'),
   AUTH_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(168),
   CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).max(30000).default(5000),
+  SCHEDULER_MODE: z.enum(['cron', 'worker']).default('cron'),
+  MIN_EFFECTIVE_INTERVAL_SECONDS: z.coerce.number().int()
+    .min(MIN_WORKER_INTERVAL_SECONDS).max(MAX_INTERVAL_SECONDS).default(MIN_EFFECTIVE_INTERVAL_SECONDS),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(60000).default(5000),
   WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10)
 });

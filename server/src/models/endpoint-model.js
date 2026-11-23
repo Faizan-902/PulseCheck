@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { getIncidentTransition } from '../services/incident-policy.js';
 
 export function createEndpointModel(pool) {
@@ -162,18 +163,34 @@ export function createEndpointModel(pool) {
       return result.rows;
     },
 
-    async claimDueEndpoints(limit = 10) {
+    async withScheduledRun(run) {
+      // Use a dedicated connection so claims and writes can use the pool even at max=1.
+      // A transaction-scoped lock also works through a transaction-mode pooler.
+      const client = new pg.Client(pool.options);
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: [lock] } = await client.query(
+          'SELECT pg_try_advisory_xact_lock(529041, 1) AS acquired, clock_timestamp() AS cutoff'
+        );
+        return lock.acquired ? await run(lock.cutoff) : null;
+      } finally {
+        await client.end();
+      }
+    },
+
+    async claimDueEndpoints(limit = 10, cutoff = null) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         const claimed = await client.query(
           `SELECT id FROM monitored_endpoints
-           WHERE is_active = TRUE AND next_check_at <= NOW()
+           WHERE is_active = TRUE AND next_check_at <= COALESCE($2::timestamptz, NOW())
              AND (check_lease_until IS NULL OR check_lease_until <= NOW())
            ORDER BY next_check_at, id
            LIMIT $1
            FOR UPDATE SKIP LOCKED`,
-          [limit]
+          [limit, cutoff]
         );
         const ids = claimed.rows.map(({ id }) => id);
         if (ids.length === 0) {
@@ -204,7 +221,7 @@ export function createEndpointModel(pool) {
       }
     },
 
-    async recordScheduledCheck({ endpointId, leaseToken, status, httpStatus, latencyMs, errorType }) {
+    async recordScheduledCheck({ endpointId, leaseToken, status, httpStatus, latencyMs, errorType }, scheduling = {}) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -222,10 +239,11 @@ export function createEndpointModel(pool) {
         });
         await client.query(
           `UPDATE monitored_endpoints
-           SET next_check_at = clock_timestamp() + check_interval_seconds * INTERVAL '1 second',
+           SET next_check_at = COALESCE($2::timestamptz, clock_timestamp())
+                                 + GREATEST(check_interval_seconds, $3) * INTERVAL '1 second',
                check_lease_until = NULL, check_lease_token = NULL
            WHERE id = $1`,
-          [endpointId]
+          [endpointId, scheduling.cutoff ?? null, scheduling.minIntervalSeconds ?? 0]
         );
         await client.query('COMMIT');
         return saved;

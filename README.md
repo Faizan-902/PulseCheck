@@ -58,6 +58,11 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
 
 6. Open [http://localhost:5173](http://localhost:5173). The dashboard sends `/api` requests through Vite to the API on port 3001. The API's database health is available at [http://localhost:3001/api/health](http://localhost:3001/api/health).
 
+## Scheduling
+
+- **Hosted cron (default).** GitHub Actions requests a run every 15 minutes. GitHub can delay or skip invocations. Set `MIN_EFFECTIVE_INTERVAL_SECONDS` on both the API and the scheduled workflow if you change the hosted cadence (default `900`). The one-shot job uses a PostgreSQL advisory lock, drains the endpoints due at its start in bounded batches, and applies the hosted minimum to subsequent checks for legacy monitors.
+- **Persistent worker.** For self-hosted deployments, set `SCHEDULER_MODE=worker` and run `npm run start:worker`. This mode accepts intervals from 30 seconds to 86,400 seconds. Checks are due-based and actual timing depends on polling, backlog, and request duration. Run a single scheduling mode against a deployment database.
+
 ## Deployment preparation
 
 For Vercel deployment, follow [the Vercel deployment guide](docs/VERCEL_DEPLOYMENT.md). In that setup, the React frontend and request-handling Express API use the same Vercel origin through `api/index.js`. The monitoring worker can run as a separate persistent process, or—on Neon Free—as the scheduled one-shot job in `.github/workflows/scheduled-checks.yml`.
@@ -99,6 +104,8 @@ Before launch, confirm the API health probe succeeds, the worker is running unde
 | `SESSION_COOKIE_SAME_SITE` | No | `lax` | Cookie SameSite policy (`strict`, `lax`, or `none`); `none` requires Secure |
 | `AUTH_SESSION_TTL_HOURS` | No | `168` | Persistent session lifetime from 1 to 720 hours |
 | `CHECK_TIMEOUT_MS` | No | `5000` | Default timeout for a new endpoint, from 100 to 30,000 ms |
+| `SCHEDULER_MODE` | No | `cron` | `cron` for hosted scheduling, `worker` for a persistent process |
+| `MIN_EFFECTIVE_INTERVAL_SECONDS` | No | `900` | Minimum hosted interval in seconds. Match the hosted cadence |
 | `WORKER_POLL_INTERVAL_MS` | No | `5000` | How often the worker looks for due endpoints, from 250 to 60,000 ms |
 | `WORKER_BATCH_SIZE` | No | `10` | Maximum due endpoints claimed per cycle, from 1 to 100 |
 | `VITE_API_BASE_URL` | No | `/api` | Optional dashboard API base URL; set it in `client/.env.local` when needed; local development uses the Vite proxy |

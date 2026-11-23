@@ -1,4 +1,5 @@
 import express from 'express';
+import { schedulingPolicy } from './config/scheduling.js';
 import { createEndpointsRouter } from './routes/endpoints.js';
 import { createHealthRouter } from './routes/health.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -62,6 +63,7 @@ export function createApp({
   authModel,
   resolver,
   defaultTimeoutMs = 5000,
+  scheduling = schedulingPolicy(),
   checkEndpoint = performHealthCheck,
   frontendOrigin = 'http://localhost:5173',
   cookieSecure = false,
@@ -115,6 +117,7 @@ export function createApp({
     checkEndpoint,
     resolver,
     defaultTimeoutMs,
+    scheduling,
     authentication
   }));
   app.use(notFoundHandler);
