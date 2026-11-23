@@ -2,7 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { LatencyChart } from '../../client/src/components/LatencyChart.jsx';
-import { buildLatencyChart, prepareLatencySeries } from '../../client/src/latency-series.js';
+import { buildLatencyChart, getRecentLatencyChecks, prepareLatencySeries } from '../../client/src/latency-series.js';
 
 const history = [
   { id: 'check-3', checkedAt: '2026-10-14T12:02:00.000Z', status: 'DOWN', latencyMs: null },
@@ -72,6 +72,28 @@ describe('persisted latency history visualization', () => {
 
     expect(chart.timeTicks).toEqual([{ timestamp: chart.points[0].timestamp, x: chart.points[0].x }]);
     expect(chart.points.every(({ x }) => x === chart.timeTicks[0].x)).toBe(true);
+  });
+
+  it('isolates actual checks from the last 24 hours without changing full history', () => {
+    const now = Date.parse('2026-10-24T12:00:00Z');
+    const checks = [
+      ...history,
+      { id: 'boundary', checkedAt: '2026-10-23T12:00:00Z' },
+      { id: 'latest', checkedAt: '2026-10-24T11:59:00Z' },
+      { id: 'future', checkedAt: '2026-10-24T12:01:00Z' }
+    ];
+
+    expect(getRecentLatencyChecks(checks, now).map(({ id }) => id)).toEqual(['boundary', 'latest']);
+    expect(checks).toHaveLength(6);
+  });
+
+  it('explains an empty time range separately from a new monitor', () => {
+    const markup = renderToStaticMarkup(React.createElement(LatencyChart, {
+      checks: [], emptyInRange: true
+    }));
+
+    expect(markup).toContain('No checks in the last 24 hours');
+    expect(markup).toContain('Select Full history to see older checks.');
   });
 
   it('renders labeled axes, persisted timestamps, and a distinct failed check without latency', () => {

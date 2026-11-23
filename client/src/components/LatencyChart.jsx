@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { buildLatencyChart } from '../latency-series.js';
+import { buildLatencyChart, getRecentLatencyChecks } from '../latency-series.js';
 
 function fullTimestamp(value) {
   return new Intl.DateTimeFormat(undefined, {
@@ -19,7 +19,7 @@ function axisTimestamp(value, span = Infinity) {
   }).format(new Date(value));
 }
 
-export function LatencyChart({ checks, loading, error, onRetry }) {
+export function LatencyChart({ checks, loading, error, onRetry, emptyInRange = false }) {
   const [activePoint, setActivePoint] = useState(null);
   const chartContainerRef = useRef(null);
   const [dimensions, setDimensions] = useState(null);
@@ -54,7 +54,15 @@ export function LatencyChart({ checks, loading, error, onRetry }) {
     return <div className="latency-state latency-error" role="alert"><span>{error}</span><button className="text-button" type="button" onClick={onRetry}>Try again</button></div>;
   }
   if (!hasPoints) {
-    return <div className="latency-state latency-empty"><span className="chart-empty-mark" aria-hidden="true">↗</span><strong>No check history yet</strong><span>Latency appears here after a manual or scheduled check is saved.</span></div>;
+    return (
+      <div className="latency-state latency-empty">
+        <span className="chart-empty-mark" aria-hidden="true">↗</span>
+        <strong>{emptyInRange ? 'No checks in the last 24 hours' : 'No check history yet'}</strong>
+        <span>{emptyInRange
+          ? 'Select Full history to see older checks.'
+          : 'Latency appears here after a manual or scheduled check is saved.'}</span>
+      </div>
+    );
   }
 
   const first = chart.points[0];
@@ -130,13 +138,27 @@ export function LatencyChart({ checks, loading, error, onRetry }) {
 }
 
 export function LatencyPanel({ endpoints, selectedEndpointId, onSelectEndpoint, checks, loading, refreshing, error, onRefresh }) {
+  const [range, setRange] = useState(null);
+  const recent = getRecentLatencyChecks(checks);
+  const selectedRange = range ?? (recent.length || !checks.length ? 'recent' : 'all');
+  const visibleChecks = selectedRange === 'recent' ? recent : checks;
+
   return <section className="surface latency-surface" aria-labelledby="latency-heading">
     <div className="surface-heading latency-heading">
-      <div><h2 id="latency-heading">Response latency</h2><p>Measured from persisted endpoint checks.</p></div>
+      <div><h2 id="latency-heading">Response latency</h2><p>Showing up to the latest 100 saved checks.</p></div>
       <div className="latency-controls">
         <label className="monitor-select-label" htmlFor="latency-monitor">Monitor</label>
-        <select id="latency-monitor" className="monitor-select" value={selectedEndpointId || ''} onChange={(event) => onSelectEndpoint(event.target.value)} disabled={!endpoints.length}>
+        <select id="latency-monitor" className="monitor-select" value={selectedEndpointId || ''} onChange={(event) => {
+          setRange(null);
+          onSelectEndpoint(event.target.value);
+        }} disabled={!endpoints.length}>
           {endpoints.length ? endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name}</option>) : <option value="">No monitors</option>}
+        </select>
+        <label className="monitor-select-label" htmlFor="latency-range">Range</label>
+        <select id="latency-range" className="monitor-select latency-range-select" value={selectedRange}
+          onChange={(event) => setRange(event.target.value)} disabled={!endpoints.length}>
+          <option value="recent">Last 24 hours</option>
+          <option value="all">Full history</option>
         </select>
         <button className="secondary-button compact-refresh" type="button" onClick={onRefresh} disabled={!selectedEndpointId || loading || refreshing}>
           <span className={refreshing ? 'refresh-icon spinning' : 'refresh-icon'} aria-hidden="true">↻</span>{refreshing ? 'Refreshing' : 'Refresh'}
@@ -144,7 +166,14 @@ export function LatencyPanel({ endpoints, selectedEndpointId, onSelectEndpoint, 
       </div>
     </div>
     {endpoints.length
-      ? <LatencyChart checks={checks} loading={loading} error={error} onRetry={onRefresh} />
+      ? <LatencyChart
+        key={`${selectedEndpointId}:${selectedRange}`}
+        checks={visibleChecks}
+        loading={loading}
+        error={error}
+        onRetry={onRefresh}
+        emptyInRange={selectedRange === 'recent' && checks.length > 0}
+      />
       : <div className="latency-state latency-empty"><strong>No monitors to chart</strong><span>Register a monitor and run a check to create history.</span></div>}
     <div className="latency-refresh-note" aria-live="polite">{selectedEndpointId ? 'History refreshes every 30 seconds while this dashboard is open.' : 'Select a monitor to view history.'}</div>
   </section>;

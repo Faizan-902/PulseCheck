@@ -1,3 +1,13 @@
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function getRecentLatencyChecks(checks, now = Date.now()) {
+  return checks.filter(({ checkedAt }) => {
+    if (checkedAt == null) return false;
+    const time = new Date(checkedAt).getTime();
+    return time >= now - DAY_MS && time <= now;
+  });
+}
+
 export function prepareLatencySeries(checks) {
   return checks
     .map((check, index) => {
