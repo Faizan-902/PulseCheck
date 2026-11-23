@@ -1,6 +1,15 @@
 # PulseCheck
 
-PulseCheck is a small API availability monitor with a React dashboard, an Express API, and a separately runnable persistent worker. It checks registered public HTTP/HTTPS endpoints on a configurable interval and saves results and incidents in PostgreSQL.
+PulseCheck is an API availability monitor with a React dashboard, an Express API, and a separately runnable persistent worker. It checks registered public HTTP/HTTPS endpoints on a configurable interval and saves results and incidents in PostgreSQL.
+
+## App experience
+
+- The public home page links to sign-in, account creation, and this repository. Authentication pages include a **Back to home** link, and browser Back restores the previous public page.
+- Sign-in and sign-up show field validation, password visibility, and progress feedback. Accounts use persistent HttpOnly session cookies and CSRF-protected writes.
+- The dashboard shows owned monitors, latest results, and open incident counts. Monitor history loads on demand.
+- Manual checks immediately add the saved result to the selected monitor’s latency chart. Feedback appears over the page without shifting its layout.
+- The latency chart defaults to recent checks when available. **Full history** displays up to the latest 100 saved checks, ordered by timestamp. Older-only history remains accessible.
+- The interface supports narrow screens, keyboard focus, and reduced-motion preferences.
 
 ## Requirements
 
@@ -13,7 +22,7 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
 1. Install the workspace dependencies:
 
    ```bash
-   npm install
+   npm ci
    ```
 
 2. Create a local environment file and fill in your PostgreSQL settings:
@@ -23,6 +32,8 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
    ```
 
    `PGPASSWORD` in `.env.example` is only a placeholder. Replace it with your own local database password, or leave it empty when your PostgreSQL server uses passwordless local authentication. The `.env` file is ignored by git.
+
+   For a persistent local worker, set `SCHEDULER_MODE=worker` in this file for both the API and worker processes.
 
 3. Create the database named by `PGDATABASE` (the example uses `pulsecheck`). For example, connect to your PostgreSQL server with `psql` or `createdb` using the same host, port, and user from `.env`, then create the database:
 
@@ -43,7 +54,7 @@ PulseCheck is a small API availability monitor with a React dashboard, an Expres
 5. Start the API, dashboard, and monitoring worker in separate terminals from the project root:
 
    ```bash
-   npm run dev:server
+   npm start
    ```
 
    ```bash
@@ -77,7 +88,7 @@ Before deploying, provision:
 
 Configure the API and worker with `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` as platform-managed environment variables or secrets. A non-empty `PGPASSWORD` is required in production; an empty password remains supported for local passwordless PostgreSQL. Production startup requires `PGSSLMODE=require`; the pool verifies the server certificate. `PGSSLMODE=disable` is intended for local PostgreSQL. Set `FRONTEND_ORIGIN` to the frontend's exact HTTPS origin (scheme and hostname, with a port only when applicable). Production startup rejects localhost frontend origins and insecure session-cookie configuration. `SESSION_COOKIE_SECURE` defaults to true in production; set `SESSION_COOKIE_SAME_SITE=none` as well when the frontend and API are on different sites. `HOST` defaults to `0.0.0.0` in production and `127.0.0.1` locally. Do not put production credentials in the repository or frontend environment: values prefixed with `VITE_` are compiled into public browser assets.
 
-Use the same database credentials for a one-off migration/release command and for both runtime services. The repository does not identify the deployed database target, so verify the deployment's `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` before applying migrations. From the repository root, run `npm run migrate` after injecting those verified target settings into the command environment. Do not run it with production credentials during local verification. The migration runner is safe to rerun and serializes concurrent migration commands with a PostgreSQL advisory lock. Migration `007_allow_unavailable_latency.sql` is discovered in numeric filename order and applied through that runner. Start the API with `npm start` and either start the worker with `npm run start:worker` as a separate long-running service or run the scheduled one-shot workflow described above. The API exposes `GET /api/health`, which includes a database connectivity check; configure the platform's readiness probe to use it. The PostgreSQL pool size is controlled by `PGPOOL_MAX` (1–10); it defaults to 2 in Vercel Function instances and 10 in other runtimes. Each serverless instance has its own pool, so estimate aggregate connections and use the database provider's supported pooler if needed. Both processes close their PostgreSQL pools on `SIGTERM`/`SIGINT`; allow enough termination grace time for in-flight requests or worker checks to finish.
+Use the same database credentials for a one-off migration/release command and for both runtime services. The repository does not identify the deployed database target, so verify the deployment's `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` before applying migrations. From the repository root, run `npm run migrate` after injecting those verified target settings into the command environment. Do not run it with production credentials during local verification. The migration runner is safe to rerun and serializes concurrent migration commands with a PostgreSQL advisory lock. The runner discovers every SQL migration in numeric order, including `008_add_monitor_rate_limits.sql`, which creates shared monitor request counters. Start the API with `npm start` and either start the worker with `npm run start:worker` as a separate long-running service or run the scheduled one-shot workflow described above. The API exposes `GET /api/health`, which includes a database connectivity check; configure the platform's readiness probe to use it. The PostgreSQL pool size is controlled by `PGPOOL_MAX` (1–10); it defaults to 2 in Vercel Function instances and 10 in other runtimes. Each serverless instance has its own pool, so estimate aggregate connections and use the database provider's supported pooler if needed. Both processes close their PostgreSQL pools on `SIGTERM`/`SIGINT`; allow enough termination grace time for in-flight requests or worker checks to finish.
 
 The worker also performs expired-data cleanup every 15 minutes. Each cleanup statement deletes at most 500 expired sessions or rate-limit rows using ordered row locks with `SKIP LOCKED`; at most four batches per table run in one cleanup cycle. If a full backlog remains, it continues on the next worker cycle. Cleanup requires the worker (persistent or scheduled one-shot) to run; the API does not run it. Signup currently returns `409 EMAIL_IN_USE` for an already registered address. This provides a clear account-creation error but permits email enumeration; this UX/privacy tradeoff is retained pending a product decision, and the public signup response is unchanged.
 
@@ -164,6 +175,8 @@ The URL is only an endpoint target. The API does not expose a general-purpose fe
 
 ## Tests and build
 
+Create a dedicated test database using your local PostgreSQL role before running backend and integration tests. Keep it separate from the application database.
+
 Run the backend tests:
 
 ```bash
@@ -188,7 +201,7 @@ npm run build
 - `server/src/models/auth-model.js`, `server/src/middleware/authentication.js`, and `server/src/controllers/auth-controller.js` implement persistent sessions, CSRF validation, and account authentication.
 - `server/src/security/target-url.js` validates public destinations and pins the HTTP connection to vetted DNS answers; `server/src/services/health-check.js` handles redirects, timeouts, latency, and UP/DOWN classification.
 - `server/src/app.js` assembles middleware and routes; `server/src/index.js` starts the API; `server/src/worker.js` starts the separate worker process.
-- `client/src/App.jsx` contains signup/login, endpoint registration, endpoint list, manual check, and history interactions; `client/src/styles.css` provides the auth and dashboard layouts.
+- `client/src/App.jsx` wires authentication and dashboard state. `views/` contains the public home, authentication, dashboard, and incidents screens. `hooks/` manages auth, monitors, and latency history. `lib/api.js` handles credentials and CSRF headers. `styles.css` and `views/auth.css` define responsive layouts.
 - `server/test/` covers API behavior, check classification, DNS safety, and PostgreSQL-backed scheduling and incident behavior.
 
 ## Request flow
@@ -199,3 +212,11 @@ npm run build
 4. A manual check loads that endpoint, resolves and validates it again, connects to a pinned address, applies the timeout, follows only validated redirects, and measures elapsed time.
 5. The repository inserts an `UP` or `DOWN` row in `check_results`. The dashboard refreshes the endpoint list and can load recent checks and incident history.
 6. The separate worker polls due endpoints, checks them using the same safety-checked service, and advances each endpoint's next scheduled time.
+
+## Verification and troubleshooting
+
+Run `npm test` with a dedicated `*_test` PostgreSQL database configured through `PULSETEST_PGDATABASE`, then run `npm run build`. GitHub Actions runs these checks on pull requests to main and pushes to main, codex branches, and fix branches.
+
+For local development, `npm start` starts the API without a file watcher. Use `npm run dev:server` when automatic restarts are wanted. If a watcher reports `EMFILE`, use `npm start`. If Vite serves stale changes on a restricted filesystem, restart it with `CHOKIDAR_USEPOLLING=true npm run dev:client`.
+
+Confirm `http://localhost:3001/api/health` reports a healthy database before testing account or monitor operations. The dashboard uses `http://localhost:5173` by default.
