@@ -135,7 +135,11 @@ function MonitorTable({ scheduling, endpoints, checksByEndpoint, expandedEndpoin
       {expanded && <div className="monitor-detail">
         <div className="detail-head history-title"><div><h4>Check history</h4><p>Last 20 persisted results · {describeSchedule(endpoint, scheduling)}</p></div><span className="detail-updated">{detail.checks?.length ? `${detail.checks.length} results` : ''}</span></div>
         <CheckHistory checks={detail.checks || []} error={detail.error} loading={historyLoadingId === endpoint.id} />
-        {detail.incidents?.length > 0 && <div className="endpoint-incident-note">{detail.incidents.filter((incident) => !incident.resolvedAt).length} open incident{detail.incidents.filter((incident) => !incident.resolvedAt).length === 1 ? '' : 's'} for this monitor</div>}
+        {(endpoint.open_incident_count > 0 || detail.incidents?.length > 0) && (
+          <div className="endpoint-incident-note">
+            {endpoint.open_incident_count ?? 0} open incident{endpoint.open_incident_count === 1 ? '' : 's'} for this monitor
+          </div>
+        )}
       </div>}
     </article>;
   })}</div>;
@@ -422,6 +426,14 @@ export default function App() {
     unchecked: endpoints.filter((endpoint) => !endpoint.latestStatus).length
   }), [endpoints]);
 
+  const recentIncidents = useMemo(() => endpoints
+    .flatMap((endpoint) => (endpoint.recentIncidents ?? []).map((incident) => ({
+      ...incident, endpointName: endpoint.name
+    })))
+    .sort((a, b) => new Date(b.openedAt) - new Date(a.openedAt) || b.id.localeCompare(a.id))
+    .slice(0, 5), [endpoints]);
+  const hasOpenIncidents = endpoints.some((endpoint) => endpoint.open_incident_count > 0);
+
   const loadHistory = useCallback(async (endpointId) => {
     setHistoryLoadingId(endpointId);
     setChecksByEndpoint((current) => ({ ...current, [endpointId]: { ...current[endpointId], checks: current[endpointId]?.checks || [], error: '' } }));
@@ -445,21 +457,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!endpoints.length) { setIncidentFeed([]); return; }
-    let active = true;
-    if (page === 'incidents') setIncidentsLoading(true);
-    Promise.allSettled(endpoints.map(async (endpoint) => ({ endpoint, incidents: await apiRequest(`/endpoints/${endpoint.id}/incidents`, {}, csrfToken) })))
-      .then((results) => {
-        if (!active) return;
-        const failures = results.filter((result) => result.status === 'rejected').length;
-        const incidents = results.filter((result) => result.status === 'fulfilled').flatMap((result) => result.value.incidents.map((incident) => ({ ...incident, endpointName: result.value.endpoint.name })));
-        incidents.sort((a, b) => new Date(b.openedAt) - new Date(a.openedAt));
-        setIncidentFeed(incidents);
-        if (failures && page === 'incidents') setPageError(`Could not load incident history for ${failures} monitor${failures === 1 ? '' : 's'}.`);
+    if (page !== 'incidents') return undefined;
+    const controller = new AbortController();
+    setIncidentsLoading(true);
+    apiRequest('/endpoints/incident-feed', { signal: controller.signal }, csrfToken)
+      .then((incidents) => {
+        if (!controller.signal.aborted) setIncidentFeed(incidents);
       })
-      .finally(() => { if (active && page === 'incidents') setIncidentsLoading(false); });
-    return () => { active = false; };
-  }, [page, endpoints, csrfToken]);
+      .catch((error) => {
+        if (!controller.signal.aborted) setPageError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIncidentsLoading(false);
+      });
+    return () => controller.abort();
+  }, [page, csrfToken]);
 
   async function handleAuthenticate(mode, credentials) {
     const body = mode === 'signup'
@@ -592,7 +604,7 @@ export default function App() {
       <div className="workspace-switch"><span className="workspace-avatar">{user.name.slice(0, 1).toUpperCase()}</span><span><strong>Personal workspace</strong><small>{user.email}</small></span><Icon name="chevron" size={14} /></div>
       <p className="nav-label">WORKSPACE</p>
       <nav className="primary-nav">
-        {[['overview', 'Overview', 'overview'], ['monitors', 'Monitors', 'monitors'], ['incidents', 'Incidents', 'incidents']].map(([id, label, icon]) => <button className={`nav-item ${page === id ? 'nav-active' : ''}`} type="button" key={id} onClick={() => { setPage(id); setPageError(''); setPageErrorAction(null); }}><Icon name={icon} /><span>{label}</span>{id === 'monitors' && <span className="nav-count">{summary.total}</span>}{id === 'incidents' && incidentFeed.some((item) => !item.resolvedAt) && <span className="nav-indicator" />}</button>)}
+        {[['overview', 'Overview', 'overview'], ['monitors', 'Monitors', 'monitors'], ['incidents', 'Incidents', 'incidents']].map(([id, label, icon]) => <button className={`nav-item ${page === id ? 'nav-active' : ''}`} type="button" key={id} onClick={() => { setPage(id); setPageError(''); setPageErrorAction(null); }}><Icon name={icon} /><span>{label}</span>{id === 'monitors' && <span className="nav-count">{summary.total}</span>}{id === 'incidents' && hasOpenIncidents && <span className="nav-indicator" />}</button>)}
       </nav>
       <p className="nav-label secondary-nav-label">PREFERENCES</p>
       <button className="nav-item nav-disabled" type="button" disabled title="Settings are not available yet"><Icon name="settings" /><span>Settings</span><span className="soon-label">Soon</span></button>
@@ -625,7 +637,7 @@ export default function App() {
               {loading ? <MonitorSkeleton /> : <MonitorTable scheduling={scheduling} endpoints={endpoints} checksByEndpoint={checksByEndpoint} expandedEndpointId={expandedEndpointId} checkingId={checkingId} checkError={checkError} deletingId={deletingId} historyLoadingId={historyLoadingId} error={pageError} onRetry={loadEndpoints} onCheck={runCheck} onDelete={(endpoint) => { setDeleteTarget(endpoint); setDeleteError(''); }} onHistory={toggleHistory} />}
             </section>
             <aside className="activity-column"><section className="surface activity-surface"><div className="surface-heading activity-heading"><div><h2>Recent incidents</h2><p>From endpoint incident history.</p></div><button className="text-button" type="button" onClick={() => setPage('incidents')}>View all</button></div>
-                {incidentFeed.length ? <div className="activity-list">{incidentFeed.slice(0, 5).map((incident) => <div className="activity-item" key={incident.id}><span className={`activity-dot ${incident.resolvedAt ? 'activity-resolved' : ''}`} /><div><strong>{incident.endpointName}</strong><p>{incident.resolvedAt ? 'Incident resolved' : 'Incident open'} · {relativeDate(incident.resolvedAt || incident.openedAt)}</p></div></div>)}</div> : <div className="activity-empty"><span className="activity-empty-icon"><Icon name="incidents" size={16} /></span><p>No incident activity to show.</p></div>}
+                {recentIncidents.length ? <div className="activity-list">{recentIncidents.map((incident) => <div className="activity-item" key={incident.id}><span className={`activity-dot ${incident.resolvedAt ? 'activity-resolved' : ''}`} /><div><strong>{incident.endpointName}</strong><p>{incident.resolvedAt ? 'Incident resolved' : 'Incident open'} · {relativeDate(incident.resolvedAt || incident.openedAt)}</p></div></div>)}</div> : <div className="activity-empty"><span className="activity-empty-icon"><Icon name="incidents" size={16} /></span><p>No incident activity to show.</p></div>}
               </section><section className="worker-note"><span className="worker-note-icon"><Icon name="pulse" size={17} /></span><div><strong>Monitoring status</strong><p>{scheduling?.mode === 'cron'
                 ? 'Hosted checks depend on a best-effort schedule and may run late.'
                 : 'Scheduled checks run while the worker process is running.'}</p></div></section>

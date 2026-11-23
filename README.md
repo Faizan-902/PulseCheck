@@ -129,7 +129,8 @@ Migration `005_add_users_sessions_ownership.sql` adds users, sessions, and nulla
 | `POST` | `/api/auth/logout` | Revoke the current session |
 | `GET` | `/api/auth/me` | Get the current user and CSRF token |
 | `POST` | `/api/endpoints` | Register an endpoint |
-| `GET` | `/api/endpoints` | List endpoints, including each endpoint's latest result |
+| `GET` | `/api/endpoints` | List endpoints with their latest check, open incident count, and recent incident summaries |
+| `GET` | `/api/endpoints/incident-feed` | Get the signed-in account’s incident history |
 | `GET` | `/api/endpoints/:id` | Get one endpoint |
 | `DELETE` | `/api/endpoints/:id` | Delete an owned endpoint and its related checks and incidents (requires CSRF token) |
 | `POST` | `/api/endpoints/:id/check` | Run and persist a manual check |

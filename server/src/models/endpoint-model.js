@@ -110,7 +110,9 @@ export function createEndpointModel(pool) {
                 latest.status AS "latestStatus",
                 latest.http_status AS "latestHttpStatus",
                 latest.latency_ms AS "latestLatencyMs",
-                latest.checked_at AS "latestCheckedAt"
+                latest.checked_at AS "latestCheckedAt",
+                open_incident.count AS open_incident_count,
+                recent_incidents.items AS "recentIncidents"
          FROM monitored_endpoints AS endpoint
          LEFT JOIN LATERAL (
            SELECT status, http_status, latency_ms, checked_at
@@ -119,6 +121,23 @@ export function createEndpointModel(pool) {
            ORDER BY checked_at DESC, id DESC
            LIMIT 1
          ) AS latest ON TRUE
+         CROSS JOIN LATERAL (
+           SELECT count(*)::integer AS count
+           FROM incidents
+           WHERE endpoint_id = endpoint.id AND resolved_at IS NULL
+         ) AS open_incident
+         CROSS JOIN LATERAL (
+           SELECT COALESCE(jsonb_agg(jsonb_build_object(
+             'id', id, 'openedAt', opened_at, 'resolvedAt', resolved_at
+           ) ORDER BY opened_at DESC, id DESC), '[]'::jsonb) AS items
+           FROM (
+             SELECT id, opened_at, resolved_at
+             FROM incidents
+             WHERE endpoint_id = endpoint.id
+             ORDER BY opened_at DESC, id DESC
+             LIMIT 5
+           ) AS recent
+         ) AS recent_incidents
          WHERE endpoint.owner_id = $1
          ORDER BY endpoint.created_at DESC, endpoint.id`,
         [ownerId]
@@ -281,6 +300,20 @@ export function createEndpointModel(pool) {
       } finally {
         client.release();
       }
+    },
+
+    async listIncidentFeed(ownerId) {
+      const result = await pool.query(
+        `SELECT incident.id, incident.endpoint_id AS "endpointId",
+                incident.opened_at AS "openedAt", incident.resolved_at AS "resolvedAt",
+                endpoint.name AS "endpointName"
+         FROM monitored_endpoints AS endpoint
+         JOIN incidents AS incident ON incident.endpoint_id = endpoint.id
+         WHERE endpoint.owner_id = $1
+         ORDER BY incident.opened_at DESC, incident.id DESC`,
+        [ownerId]
+      );
+      return result.rows;
     },
 
     async listIncidents(endpointId, ownerId) {

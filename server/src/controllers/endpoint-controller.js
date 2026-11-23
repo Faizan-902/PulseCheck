@@ -58,6 +58,10 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
       response.json({ data: checks });
     },
 
+    async incidentFeed(request, response) {
+      response.json({ data: await model.listIncidentFeed(request.user.id) });
+    },
+
     async incidents(request, response) {
       await requireEndpoint(request.params.id, request.user.id);
       response.json({ data: await model.listIncidents(request.params.id, request.user.id) });

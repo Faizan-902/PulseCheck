@@ -195,6 +195,46 @@ describe('PostgreSQL monitor limits', () => {
     expect((await create(second, other, 'Other user')).status).toBe(201);
   });
 
+  it('returns owner-scoped open counts and bounded recent summaries in the endpoint list', async () => {
+    const [owner, other] = await Promise.all([authenticateFixture(ownerId), authenticateFixture(otherOwnerId)]);
+    const { agent } = monitorApi(poolOne, modelOne, 10);
+    const create = async (name, auth = owner) => {
+      const response = await agent.post('/api/endpoints').set(auth)
+        .send({ name, url: 'https://api.example.com' });
+      expect(response.status).toBe(201);
+      return response.body.data.id;
+    };
+    const empty = await create('Empty');
+    const single = await create('Single');
+    const several = await create('Several');
+    const otherId = await create('Other user', other);
+
+    await poolOne.query(
+      `INSERT INTO incidents (endpoint_id) VALUES ($1), ($2), ($3)`,
+      [single, several, otherId]
+    );
+    await poolOne.query(
+      `INSERT INTO incidents (endpoint_id, opened_at, resolved_at)
+       SELECT $1, NOW() - n * INTERVAL '1 minute', NOW()
+       FROM generate_series(1, 6) AS n`,
+      [several]
+    );
+
+    const response = await agent.get('/api/endpoints').set(owner);
+    expect(response.status).toBe(200);
+    const rows = Object.fromEntries(response.body.data.map((monitor) => [monitor.id, monitor]));
+    expect(Object.keys(rows)).toHaveLength(3);
+    expect(rows[empty]).toMatchObject({ open_incident_count: 0, recentIncidents: [] });
+    expect(rows[single]).toMatchObject({ open_incident_count: 1, recentIncidents: [expect.any(Object)] });
+    expect(rows[several].open_incident_count).toBe(1);
+    expect(rows[several].recentIncidents).toHaveLength(5);
+
+    const feed = await agent.get('/api/endpoints/incident-feed').set(owner);
+    expect(feed.status).toBe(200);
+    expect(feed.body.data).toHaveLength(8);
+    expect(feed.body.data.every(({ endpointId }) => endpointId === single || endpointId === several)).toBe(true);
+  });
+
   it('shares the per-monitor cooldown and per-user check allowance across API instances', async () => {
     const [owner, other] = await Promise.all([authenticateFixture(ownerId), authenticateFixture(otherOwnerId)]);
     const first = monitorApi(poolOne, modelOne, 10);

@@ -29,6 +29,7 @@ export function createEndpointsRouter(dependencies) {
     controller.create
   );
   router.get('/', controller.list);
+  router.get('/incident-feed', controller.incidentFeed);
   router.get('/:id', validate(endpointIdSchema, 'params'), controller.get);
   router.delete('/:id', dependencies.authentication.requireCsrf, validate(endpointIdSchema, 'params'), controller.remove);
   router.post('/:id/check',
