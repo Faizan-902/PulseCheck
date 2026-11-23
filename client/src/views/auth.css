@@ -3,35 +3,57 @@
 .auth-shell { max-width: 1590px; min-height: 100vh; margin: auto; padding: 0 var(--gutter) 36px; }
 .auth-header { min-height: 80px; display: flex; align-items: center; border-bottom: 1px solid var(--line); }
 .auth-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr); align-items: stretch; gap: 18px; margin-top: 20px; }
-.auth-story { position: relative; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: #efe9dc; border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); }
+.auth-story { align-self: start; position: relative; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: #efe9dc; border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); }
 .auth-story-copy { position: relative; z-index: 1; max-width: 620px; padding: clamp(25px, 4.6vw, 65px) clamp(24px, 4.8vw, 70px) 0; }
 .auth-story h1 { color: #2b2924; font-size: clamp(3.8rem, 6.2vw, 6.5rem); }
 .auth-story p { max-width: 360px; margin: 17px 0 0; color: var(--muted); font-size: clamp(14px, 1.28vw, 18px); }
 .auth-hero-image {
   display: block;
   width: 100%;
-  height: clamp(280px, 30vw, 430px);
+  height: auto;
+  aspect-ratio: 3 / 2;
+  flex: 0 0 auto;
   margin-top: auto;
-  object-fit: cover;
-  object-position: 52% 60%;
+  object-fit: contain;
+  object-position: center;
   mask-image: linear-gradient(to bottom, transparent, #000 24%);
 }
 .auth-form-side { display: grid; place-items: center; padding: clamp(20px, 4vw, 54px); background: var(--surface); border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); }
 .auth-form-wrap { width: min(100%, 370px); }
 .auth-form-wrap h2 { margin: 0 0 8px; font: 400 clamp(2.55rem, 4.2vw, 3.8rem) / 1 var(--serif); letter-spacing: -.03em; }
 .auth-subtitle { margin-bottom: 24px; color: var(--muted); font-size: 14px; }
-.auth-form { display: grid; gap: 15px; }
 .auth-form input { min-height: 47px; }
 .auth-submit { min-height: 46px; margin-top: 5px; font-size: 14px; }
-.auth-switch { margin: 22px 0 0; color: var(--muted); font-size: 13px; }
-.auth-switch button { color: var(--accent); border: 0; padding: 2px 0; background: transparent; font-weight: 700; }
-.auth-switch button:hover { text-decoration: underline; }
 .auth-error { padding: 9px 11px; border-radius: 10px; background: var(--red-bg); color: var(--red); font-size: 13px; }
 
 @media (max-width: 795px) {
   .auth-header { min-height: 63px; }
   .auth-layout { grid-template-columns: 1fr; gap: 13px; margin-top: 13px; }
   .auth-story h1 { font-size: clamp(2.8rem, 10vw, 4.6rem); }
-  .auth-hero-image { height: clamp(142px, 40vw, 250px); }
+  .auth-hero-image { height: auto; }
   .auth-form-side { padding: 25px 20px 28px; }
+}
+
+.auth-story { grid-column: 1; grid-row: 1; }
+.auth-form-side { grid-column: 2; grid-row: 1; }
+.auth-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 24px; border-radius: 999px; background: var(--sand); }
+.auth-mode button { min-height: 38px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; }
+.auth-mode button:hover:not(:disabled), .auth-mode button[aria-pressed="true"] { color: var(--accent); }
+.auth-mode button[aria-pressed="true"] { border-color: var(--line); background: var(--surface); }
+.auth-form fieldset { display: grid; gap: 15px; padding: 0; margin: 0; border: 0; min-inline-size: 0; }
+.auth-field { display: grid; gap: 6px; }
+.auth-field small { color: var(--muted); font-size: 12px; }
+.auth-field .auth-field-error { color: var(--red); }
+.auth-field input[aria-invalid="true"] { border-color: var(--red); }
+.auth-input-wrap { position: relative; }
+.auth-input-wrap:has(.auth-password-toggle) input { padding-inline-end: 72px; }
+.auth-password-toggle { position: absolute; inset: 4px 5px 4px auto; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--accent); font-size: 13px; font-weight: 700; }
+.auth-password-toggle:hover:not(:disabled) { background: var(--blue-bg); }
+.auth-error button { display: block; margin-top: 4px; padding: 0; border: 0; background: transparent; color: inherit; text-decoration: underline; font-weight: 700; }
+.auth-form fieldset:disabled input { color: var(--muted); }
+
+@media (max-width: 795px) {
+  .auth-story, .auth-form-side { grid-column: 1; }
+  .auth-form-side { grid-row: 1; }
+  .auth-story { grid-row: 2; }
 }
