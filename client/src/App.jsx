@@ -3,6 +3,8 @@ import { useAuth } from './hooks/useAuth.js';
 import { useEndpoints } from './hooks/useEndpoints.js';
 import { useIncidentFeed } from './hooks/useIncidentFeed.js';
 import { Dashboard } from './views/Dashboard.jsx';
+import { Home } from './views/Home.jsx';
+import { usePublicPage } from './hooks/usePublicPage.js';
 import { SignIn } from './views/SignIn.jsx';
 
 export default function App() {
@@ -11,6 +13,7 @@ export default function App() {
   const [pageErrorAction, setPageErrorAction] = useState(null);
   const [notice, setNotice] = useState('');
   const auth = useAuth();
+  const publicPage = usePublicPage();
   const messages = {
     pageError,
     setPageError,
@@ -43,6 +46,7 @@ export default function App() {
   async function handleLogout() {
     try {
       await auth.logout();
+      window.location.hash = 'home';
       monitors.clearMonitors();
       incidents.clear();
       messages.clearPageError();
@@ -63,7 +67,16 @@ export default function App() {
   }
 
   if (!auth.user) {
-    return <SignIn onAuthenticate={handleAuthenticate} serviceError={auth.authError} />;
+    return publicPage === 'home' ? (
+      <Home />
+    ) : (
+      <SignIn
+        key={publicPage}
+        initialMode={publicPage === 'signup' ? 'signup' : 'login'}
+        onAuthenticate={handleAuthenticate}
+        serviceError={auth.authError}
+      />
+    );
   }
   return (
     <Dashboard

@@ -57,3 +57,15 @@
   .auth-form-side { grid-row: 1; }
   .auth-story { grid-row: 2; }
 }
+
+.auth-back { margin-left: auto; padding: 10px 0 10px 14px; font-size: 13px; color: var(--accent); text-decoration: none; }
+.auth-back:hover { text-decoration: underline; }
+.home-header { justify-content: space-between; gap: 12px; }
+.home-header nav { display: flex; align-items: center; gap: 12px; }
+.home-header a { text-decoration: none; }
+.home-hero { margin-top: 20px; padding: clamp(24px, 5vw, 70px) 0 0; overflow: hidden; border: 1px solid var(--line); border-radius: 24px; background: #efe9dc; text-align: center; }
+.home-copy { max-width: 850px; margin: auto; padding: 0 24px; }
+.home-copy h1 { font-size: clamp(3rem, 7vw, 6rem); }
+.home-copy p { max-width: 510px; margin: 20px auto; color: var(--muted); }
+.home-copy .primary-button { min-height: 46px; padding-inline: 24px; text-decoration: none; }
+.home-hero img { display: block; width: min(100%, 1000px); height: auto; margin: 15px auto 0; aspect-ratio: 3 / 2; object-fit: contain; mask-image: linear-gradient(to bottom, transparent, #000 20%); }

@@ -49,8 +49,8 @@ function Field({ name, label, error, hint, children, ...inputProps }) {
   );
 }
 
-export function SignIn({ onAuthenticate, serviceError = '' }) {
-  const [mode, setMode] = useState('login');
+export function SignIn({ onAuthenticate, serviceError = '', initialMode = 'login' }) {
+  const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [error, setError] = useState(null);
@@ -119,7 +119,10 @@ export function SignIn({ onAuthenticate, serviceError = '' }) {
   return (
     <div className="auth-shell">
       <header className="auth-header">
-        <Brand href="#signin" />
+        <Brand href="#home" />
+        <a className="auth-back" href="#home">
+          ← Back to home
+        </a>
       </header>
       <main className="auth-layout">
         <section id="signin" className="auth-form-side" aria-labelledby="auth-form-heading">
