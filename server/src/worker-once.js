@@ -2,13 +2,14 @@ import { env } from './config/env.js';
 import { pool } from './db/pool.js';
 import { createEndpointModel } from './models/endpoint-model.js';
 import { createAuthModel } from './models/auth-model.js';
-import { createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
+import { createEndpointRateLimitStore, createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
 import { performHealthCheck } from './services/health-check.js';
 import { runWorkerOnce } from './services/worker-once.js';
 
 const model = createEndpointModel(pool);
 const authModel = createAuthModel(pool);
 const rateLimitStore = createPostgresRateLimitStore(pool, 'maintenance');
+const endpointRateLimitStore = createEndpointRateLimitStore(pool, 'maintenance');
 
 try {
   await model.ping();
@@ -17,6 +18,7 @@ try {
     checkEndpoint: performHealthCheck,
     authModel,
     rateLimitStore,
+    endpointRateLimitStore,
     minIntervalSeconds: env.MIN_EFFECTIVE_INTERVAL_SECONDS,
     batchSize: env.WORKER_BATCH_SIZE
   });

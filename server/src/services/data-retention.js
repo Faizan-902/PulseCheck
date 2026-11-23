@@ -11,6 +11,7 @@ async function deleteBatches(deleteBatch, batchSize, maxBatches) {
 export async function cleanupExpiredData({
   authModel,
   rateLimitStore,
+  endpointRateLimitStore,
   batchSize = 500,
   maxBatches = 4
 }) {
@@ -26,5 +27,12 @@ export async function cleanupExpiredData({
   const rateLimits = await deleteBatches(
     (limit) => rateLimitStore.deleteExpiredBatch(limit), batchSize, maxBatches
   );
+  if (endpointRateLimitStore) {
+    const endpointLimits = await deleteBatches(
+      (limit) => endpointRateLimitStore.deleteExpiredBatch(limit), batchSize, maxBatches
+    );
+    rateLimits.deleted += endpointLimits.deleted;
+    rateLimits.hasMore ||= endpointLimits.hasMore;
+  }
   return { sessions, rateLimits, hasMore: sessions.hasMore || rateLimits.hasMore };
 }

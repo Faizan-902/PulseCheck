@@ -77,7 +77,12 @@ async function fetchWithoutFollowingUnvalidatedRedirects({ endpoint, fetchImpl, 
       throw new TargetValidationError('REDIRECT_ERROR', 'The endpoint redirected too many times.');
     }
 
-    const nextUrl = new URL(location, currentUrl);
+    let nextUrl;
+    try {
+      nextUrl = new URL(location, currentUrl);
+    } catch {
+      throw new TargetValidationError('REDIRECT_ERROR', 'The endpoint returned an invalid redirect URL.');
+    }
     if (currentUrl.protocol === 'https:' && nextUrl.protocol === 'http:') {
       throw new TargetValidationError('REDIRECT_ERROR', 'HTTPS endpoints cannot redirect to HTTP.');
     }

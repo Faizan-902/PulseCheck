@@ -2,7 +2,7 @@ import { env } from './config/env.js';
 import { pool } from './db/pool.js';
 import { createEndpointModel } from './models/endpoint-model.js';
 import { createAuthModel } from './models/auth-model.js';
-import { createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
+import { createEndpointRateLimitStore, createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
 import { performHealthCheck } from './services/health-check.js';
 import { runWorkerCycle } from './services/monitor-worker.js';
 import { cleanupExpiredData } from './services/data-retention.js';
@@ -10,6 +10,7 @@ import { cleanupExpiredData } from './services/data-retention.js';
 const model = createEndpointModel(pool);
 const authModel = createAuthModel(pool);
 const rateLimitStore = createPostgresRateLimitStore(pool, 'maintenance');
+const endpointRateLimitStore = createEndpointRateLimitStore(pool, 'maintenance');
 const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const CLEANUP_BATCH_SIZE = 500;
 const CLEANUP_MAX_BATCHES = 4;
@@ -38,6 +39,7 @@ async function poll() {
     activeCleanup = cleanupExpiredData({
       authModel,
       rateLimitStore,
+      endpointRateLimitStore,
       batchSize: CLEANUP_BATCH_SIZE,
       maxBatches: CLEANUP_MAX_BATCHES
     });

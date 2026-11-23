@@ -179,6 +179,7 @@ h1 { margin: 0 0 6px; color: #eff1f6; font-size: 25px; line-height: 1.25; font-w
 .detail-muted, .detail-error { margin: 9px 0 0; font-size: 9px; }
 .detail-muted { color: #747d89; }
 .detail-error, .form-error { color: #f08b90; }
+.monitor-check-error { margin: 0; padding: 0 16px 12px; font-size: 12px; }
 .detail-state, .loading-state { min-height: 95px; display: flex; align-items: center; justify-content: center; gap: 9px; color: #9098a5; font-size: 10px; }
 .endpoint-incident-note { margin-top: 10px; color: #e6b773; font-size: 9px; }
 .activity-column { display: flex; flex-direction: column; gap: 12px; }

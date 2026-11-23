@@ -3,6 +3,22 @@ import { createHash } from 'node:crypto';
 const CLEANUP_EVERY = 128;
 
 export function createPostgresRateLimitStore(pool, namespace = 'login') {
+  return createStore(pool, namespace, 'login_rate_limits');
+}
+
+export function createEndpointRateLimitStore(pool, namespace) {
+  return createStore(pool, namespace, 'rate_limits');
+}
+
+export function createEndpointRateLimitStores(pool) {
+  return {
+    create: createEndpointRateLimitStore(pool, 'create'),
+    checkUser: createEndpointRateLimitStore(pool, 'check-user'),
+    checkEndpoint: createEndpointRateLimitStore(pool, 'check-endpoint')
+  };
+}
+
+function createStore(pool, namespace, table) {
   let windowMs = 15 * 60 * 1000;
   let incrementsSinceCleanup = 0;
 
@@ -13,13 +29,13 @@ export function createPostgresRateLimitStore(pool, namespace = 'login') {
   async function deleteExpiredBatch(limit = 500) {
     const result = await pool.query(
       `WITH expired AS (
-         SELECT key_hash FROM login_rate_limits
+         SELECT key_hash FROM ${table}
          WHERE reset_at <= clock_timestamp()
          ORDER BY reset_at, key_hash
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       DELETE FROM login_rate_limits AS limits
+       DELETE FROM ${table} AS limits
        USING expired
        WHERE limits.key_hash = expired.key_hash
        RETURNING limits.key_hash`,
@@ -37,16 +53,16 @@ export function createPostgresRateLimitStore(pool, namespace = 'login') {
 
     async increment(key) {
       const result = await pool.query(
-        `INSERT INTO login_rate_limits (key_hash, hits, reset_at)
+        `INSERT INTO ${table} AS limits (key_hash, hits, reset_at)
          VALUES ($1, 1, clock_timestamp() + ($2 * INTERVAL '1 millisecond'))
          ON CONFLICT (key_hash) DO UPDATE
          SET hits = CASE
-               WHEN login_rate_limits.reset_at <= statement_timestamp() THEN 1
-               ELSE login_rate_limits.hits + 1
+               WHEN limits.reset_at <= statement_timestamp() THEN 1
+               ELSE limits.hits + 1
              END,
              reset_at = CASE
-               WHEN login_rate_limits.reset_at <= statement_timestamp() THEN EXCLUDED.reset_at
-               ELSE login_rate_limits.reset_at
+               WHEN limits.reset_at <= statement_timestamp() THEN EXCLUDED.reset_at
+               ELSE limits.reset_at
              END
          RETURNING hits AS "totalHits", reset_at AS "resetTime"`,
         [keyHash(key), windowMs]
@@ -63,13 +79,13 @@ export function createPostgresRateLimitStore(pool, namespace = 'login') {
 
     async decrement(key) {
       await pool.query(
-        `UPDATE login_rate_limits SET hits = GREATEST(hits - 1, 0) WHERE key_hash = $1`,
+        `UPDATE ${table} SET hits = GREATEST(hits - 1, 0) WHERE key_hash = $1`,
         [keyHash(key)]
       );
     },
 
     async resetKey(key) {
-      await pool.query('DELETE FROM login_rate_limits WHERE key_hash = $1', [keyHash(key)]);
+      await pool.query(`DELETE FROM ${table} WHERE key_hash = $1`, [keyHash(key)]);
     },
 
     deleteExpiredBatch

@@ -60,6 +60,24 @@ describe('performHealthCheck', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('caps redirects at five hops', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(302, '/next'));
+
+    const result = await performHealthCheck(endpoint, { fetchImpl, resolver: publicResolver });
+
+    expect(result).toMatchObject({ status: 'DOWN', errorType: 'REDIRECT_ERROR' });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+  });
+
+  it('classifies a malformed redirect instead of retrying it', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(302, 'https://[invalid'));
+
+    const result = await performHealthCheck(endpoint, { fetchImpl, resolver: publicResolver });
+
+    expect(result).toMatchObject({ status: 'DOWN', errorType: 'REDIRECT_ERROR' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it('classifies a request timeout', async () => {
     const timeout = new Error('request exceeded timeout');
     timeout.name = 'TimeoutError';

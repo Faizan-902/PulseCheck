@@ -104,6 +104,7 @@ Before launch, confirm the API health probe succeeds, the worker is running unde
 | `SESSION_COOKIE_SAME_SITE` | No | `lax` | Cookie SameSite policy (`strict`, `lax`, or `none`); `none` requires Secure |
 | `AUTH_SESSION_TTL_HOURS` | No | `168` | Persistent session lifetime from 1 to 720 hours |
 | `CHECK_TIMEOUT_MS` | No | `5000` | Default timeout for a new endpoint, from 100 to 30,000 ms |
+| `MAX_ENDPOINTS_PER_USER` | No | `10` | Maximum registered monitors per account |
 | `SCHEDULER_MODE` | No | `cron` | `cron` for hosted scheduling, `worker` for a persistent process |
 | `MIN_EFFECTIVE_INTERVAL_SECONDS` | No | `900` | Minimum hosted interval in seconds. Match the hosted cadence |
 | `WORKER_POLL_INTERVAL_MS` | No | `5000` | How often the worker looks for due endpoints, from 250 to 60,000 ms |
@@ -155,6 +156,8 @@ Incident policy: **manual checks do not affect incident state**. Only scheduled 
 ## Network safety
 
 Registration and every check resolve the hostname and reject any DNS answer that is not a public unicast address. Literal private/reserved addresses and local/internal hostnames are rejected. Requests use a per-hop Undici dispatcher pinned to the validated DNS answers, so the connection cannot perform a second unvalidated DNS lookup. Redirects are handled manually, capped at five hops, and each new destination is checked before it is contacted. HTTPS-to-HTTP redirects are blocked. Request timeouts use `AbortSignal.timeout()`. PulseCheck reads response headers and status only, then cancels the response body.
+
+Each account can register up to `MAX_ENDPOINTS_PER_USER` monitors. Creation accepts up to 10 requests per account per hour. Manual checks accept up to 20 requests per account per hour and one check per monitor per 30 seconds. Exhausted request limits return `429` with `Retry-After`. PostgreSQL shares the counters across API instances.
 
 The URL is only an endpoint target. The API does not expose a general-purpose fetch or proxy route.
 

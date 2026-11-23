@@ -9,6 +9,7 @@ export async function runWorkerOnce({
   checkEndpoint,
   authModel,
   rateLimitStore,
+  endpointRateLimitStore,
   batchSize = 10,
   minIntervalSeconds,
   logger = console
@@ -29,6 +30,7 @@ export async function runWorkerOnce({
       cleanup = await cleanupExpiredData({
         authModel,
         rateLimitStore,
+        endpointRateLimitStore,
         batchSize: CLEANUP_BATCH_SIZE,
         maxBatches: CLEANUP_MAX_BATCHES
       });

@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { DEFAULT_MAX_ENDPOINTS_PER_USER } from './endpoint-limits.js';
 import {
   MAX_INTERVAL_SECONDS, MIN_EFFECTIVE_INTERVAL_SECONDS, MIN_WORKER_INTERVAL_SECONDS
 } from './scheduling.js';
@@ -37,6 +38,7 @@ const envSchema = z.object({
   SESSION_COOKIE_SAME_SITE: z.enum(['strict', 'lax', 'none']).default('lax'),
   AUTH_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(168),
   CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).max(30000).default(5000),
+  MAX_ENDPOINTS_PER_USER: z.coerce.number().int().min(1).max(2147483647).default(DEFAULT_MAX_ENDPOINTS_PER_USER),
   SCHEDULER_MODE: z.enum(['cron', 'worker']).default('cron'),
   MIN_EFFECTIVE_INTERVAL_SECONDS: z.coerce.number().int()
     .min(MIN_WORKER_INTERVAL_SECONDS).max(MAX_INTERVAL_SECONDS).default(MIN_EFFECTIVE_INTERVAL_SECONDS),

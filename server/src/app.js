@@ -1,4 +1,5 @@
 import express from 'express';
+import { DEFAULT_MAX_ENDPOINTS_PER_USER } from './config/endpoint-limits.js';
 import { schedulingPolicy } from './config/scheduling.js';
 import { createEndpointsRouter } from './routes/endpoints.js';
 import { createHealthRouter } from './routes/health.js';
@@ -64,6 +65,8 @@ export function createApp({
   resolver,
   defaultTimeoutMs = 5000,
   scheduling = schedulingPolicy(),
+  maxEndpointsPerUser = DEFAULT_MAX_ENDPOINTS_PER_USER,
+  endpointRateLimitStores,
   checkEndpoint = performHealthCheck,
   frontendOrigin = 'http://localhost:5173',
   cookieSecure = false,
@@ -91,6 +94,7 @@ export function createApp({
     if (isAllowedOrigin) {
       response.setHeader('Access-Control-Allow-Origin', origin);
       response.setHeader('Access-Control-Allow-Credentials', 'true');
+      response.setHeader('Access-Control-Expose-Headers', 'Retry-After');
       response.setHeader('Vary', 'Origin');
     }
     if (request.method === 'OPTIONS') {
@@ -118,6 +122,8 @@ export function createApp({
     resolver,
     defaultTimeoutMs,
     scheduling,
+    maxEndpointsPerUser,
+    endpointRateLimitStores,
     authentication
   }));
   app.use(notFoundHandler);

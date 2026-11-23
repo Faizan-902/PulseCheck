@@ -23,6 +23,7 @@ async function apiRequest(path, options = {}, csrfToken = '', includeMetadata = 
   if (!response.ok) {
     const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
     error.status = response.status;
+    error.code = payload?.error?.code;
     error.details = payload?.error?.details;
     throw error;
   }
@@ -99,7 +100,7 @@ function CheckHistory({ checks, loading, error }) {
   </table></div>;
 }
 
-function MonitorTable({ scheduling, endpoints, checksByEndpoint, expandedEndpointId, checkingId, deletingId, historyLoadingId, error, onRetry, onCheck, onDelete, onHistory }) {
+function MonitorTable({ scheduling, endpoints, checksByEndpoint, expandedEndpointId, checkingId, checkError, deletingId, historyLoadingId, error, onRetry, onCheck, onDelete, onHistory }) {
   if (!endpoints.length) return <div className="empty-state">
     <span className="empty-icon"><Icon name={error ? 'refresh' : 'pulse'} size={23} /></span>
     <h3>{error ? 'Monitor list unavailable' : 'No monitors registered'}</h3>
@@ -128,6 +129,9 @@ function MonitorTable({ scheduling, endpoints, checksByEndpoint, expandedEndpoin
           <button className="delete-button" disabled={deletingId === endpoint.id} onClick={() => onDelete(endpoint)} type="button">{deletingId === endpoint.id ? 'Deleting…' : 'Delete'}</button>
         </div>
       </div>
+      {checkError?.endpointId === endpoint.id && (
+        <p className="detail-error monitor-check-error" role="alert">{checkError.message}</p>
+      )}
       {expanded && <div className="monitor-detail">
         <div className="detail-head history-title"><div><h4>Check history</h4><p>Last 20 persisted results · {describeSchedule(endpoint, scheduling)}</p></div><span className="detail-updated">{detail.checks?.length ? `${detail.checks.length} results` : ''}</span></div>
         <CheckHistory checks={detail.checks || []} error={detail.error} loading={historyLoadingId === endpoint.id} />
@@ -186,7 +190,7 @@ function DeleteMonitorDialog({ endpoint, busy, error, onCancel, onConfirm }) {
   </div>;
 }
 
-function AddMonitorDialog({ form, setForm, formError, saving, scheduling, onClose, onSubmit }) {
+function AddMonitorDialog({ form, setForm, formError, saving, scheduling, atMonitorLimit, onClose, onSubmit }) {
   const dialogRef = useRef(null);
   const firstInputRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -246,7 +250,7 @@ function AddMonitorDialog({ form, setForm, formError, saving, scheduling, onClos
         {scheduling.mode === 'cron' && <p className="form-hint">Hosted intervals start at {scheduling.minIntervalSeconds.toLocaleString()} seconds. Scheduled runs can be delayed.</p>}
         {formError && <p className="form-error" role="alert">{formError}</p>}
         <p className="form-hint">Only public HTTP and HTTPS destinations are allowed. The server validates the URL before checking it.</p>
-        <div className="dialog-actions"><button className="secondary-button" type="button" onClick={onClose} disabled={saving}>Cancel</button><button className="primary-button" disabled={saving} type="submit">{saving ? <><span className="button-spinner" />Adding monitor…</> : <><Icon name="plus" size={16} /> Add monitor</>}</button></div>
+        <div className="dialog-actions"><button className="secondary-button" type="button" onClick={onClose} disabled={saving}>Cancel</button><button className="primary-button" disabled={saving || atMonitorLimit} type="submit">{saving ? <><span className="button-spinner" />Adding monitor…</> : <><Icon name="plus" size={16} /> Add monitor</>}</button></div>
       </form>
     </section>
   </div>;
@@ -299,6 +303,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [checkingId, setCheckingId] = useState(null);
+  const [checkError, setCheckError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [historyLoadingId, setHistoryLoadingId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -315,6 +320,7 @@ export default function App() {
   const [pageErrorAction, setPageErrorAction] = useState(null);
   const [notice, setNotice] = useState('');
   const [scheduling, setScheduling] = useState(null);
+  const [maxEndpointsPerUser, setMaxEndpointsPerUser] = useState(null);
   const [form, setForm] = useState(null);
 
   const loadEndpoints = useCallback(async () => {
@@ -324,6 +330,7 @@ export default function App() {
     try {
       const { data, meta } = await apiRequest('/endpoints', {}, csrfToken, true);
       setScheduling(meta.scheduling);
+      setMaxEndpointsPerUser(meta.maxEndpointsPerUser);
       setEndpoints(data);
       return true;
     } catch (error) {
@@ -461,6 +468,9 @@ export default function App() {
     const data = await apiRequest(`/auth/${mode === 'signup' ? 'signup' : 'login'}`, {
       method: 'POST', body: JSON.stringify(body)
     });
+    setScheduling(null);
+    setMaxEndpointsPerUser(null);
+    setCheckError(null);
     setUser(data.user);
     setCsrfToken(data.csrfToken);
     setAuthError('');
@@ -482,19 +492,29 @@ export default function App() {
       await apiRequest('/endpoints', { method: 'POST', body: JSON.stringify({ name: form.name, url: form.url, timeoutMs: Number(form.timeoutMs), checkIntervalSeconds: Number(form.checkIntervalSeconds) }) }, csrfToken);
       setFormOpen(false);
       setNotice('Monitor added. Run a check to record its first result.'); await loadEndpoints();
-    } catch (error) { setFormError(error.details?.find(({ path }) => path === 'checkIntervalSeconds')?.message || error.message); }
+    } catch (error) {
+      setFormError(error.details?.find(({ path }) => path === 'checkIntervalSeconds')?.message || error.message);
+      if (error.code === 'endpoint_limit_reached') await loadEndpoints();
+    }
     finally { setSaving(false); }
   }
 
   async function runCheck(endpoint) {
-    setCheckingId(endpoint.id); setPageError(''); setPageErrorAction(null); setNotice('');
+    setCheckingId(endpoint.id); setCheckError(null); setPageError(''); setPageErrorAction(null); setNotice('');
     try {
       const check = await apiRequest(`/endpoints/${endpoint.id}/check`, { method: 'POST' }, csrfToken);
       setNotice(`${endpoint.name}: ${check.status}${check.httpStatus ? ` · HTTP ${check.httpStatus}` : ''} · ${check.latencyMs} ms`);
       await loadEndpoints();
       if (expandedEndpointId === endpoint.id) await loadHistory(endpoint.id);
       if (selectedLatencyEndpointId === endpoint.id) refreshLatencyHistory();
-    } catch (error) { setPageError(error.message); setPageErrorAction({ label: 'Retry check', run: () => runCheck(endpoint) }); }
+    } catch (error) {
+      if ([403, 429].includes(error.status)) {
+        setCheckError({ endpointId: endpoint.id, message: error.message });
+      } else {
+        setPageError(error.message);
+        setPageErrorAction({ label: 'Retry check', run: () => runCheck(endpoint) });
+      }
+    }
     finally { setCheckingId(null); }
   }
 
@@ -560,6 +580,7 @@ export default function App() {
   if (authLoading) return <main className="auth-loading"><span className="spinner" /><p>Checking your session…</p></main>;
   if (!user) return <AuthenticationScreen onAuthenticate={handleAuthenticate} serviceError={authError} />;
 
+  const atMonitorLimit = maxEndpointsPerUser != null && summary.total >= maxEndpointsPerUser;
   const currentDown = summary.down > 0;
   const systemPending = !summary.total || summary.unchecked > 0;
   const systemTone = currentDown ? 'system-degraded' : systemPending ? 'system-pending' : 'system-operational';
@@ -579,7 +600,8 @@ export default function App() {
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page === 'overview' ? 'Overview' : page === 'monitors' ? 'Monitors' : 'Incidents'}</strong></div><div className="topbar-actions"><span className={`system-pill ${systemTone}`}><span className="live-dot" />{systemLabel}</span><button className="primary-button add-button" type="button" disabled={!scheduling}
+      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page === 'overview' ? 'Overview' : page === 'monitors' ? 'Monitors' : 'Incidents'}</strong></div><div className="topbar-actions"><span className={`system-pill ${systemTone}`}><span className="live-dot" />{systemLabel}</span><button className="primary-button add-button" type="button" disabled={!scheduling || atMonitorLimit}
+        title={atMonitorLimit ? 'Monitor limit reached' : undefined}
         onClick={() => { setFormError(''); setForm(emptyMonitorForm(scheduling)); setFormOpen(true); }}><Icon name="plus" size={16} />Add monitor</button><button className="signout-button" type="button" onClick={handleLogout}>Sign out</button></div></header>
       <div className="page-content">
         {page === 'incidents' ? <>
@@ -593,14 +615,14 @@ export default function App() {
           {pageError && <div className="alert-banner" role="alert"><span>{pageError}</span><div className="alert-actions">{pageErrorAction && <button type="button" onClick={pageErrorAction.run}>{pageErrorAction.label}</button>}<button type="button" onClick={() => { setPageError(''); setPageErrorAction(null); }} aria-label="Dismiss error"><Icon name="close" size={15} /></button></div></div>}
           {notice && <div className="success-banner" role="status"><span className="success-check">✓</span>{notice}<button onClick={() => setNotice('')} type="button" aria-label="Dismiss message"><Icon name="close" size={15} /></button></div>}
           <section className="kpi-grid" aria-label="Monitor summary">
-            <article className="kpi-card"><span className="kpi-label">Total monitors</span><div><strong>{loading ? '—' : summary.total}</strong><span className="kpi-icon icon-neutral"><Icon name="monitors" /></span></div><small>Registered endpoints</small></article>
+            <article className="kpi-card"><span className="kpi-label">Total monitors</span><div><strong>{loading ? '—' : summary.total}</strong><span className="kpi-icon icon-neutral"><Icon name="monitors" /></span></div><small>{maxEndpointsPerUser == null ? 'Registered endpoints' : `${summary.total} of ${maxEndpointsPerUser} monitors used`}</small></article>
             <article className="kpi-card"><span className="kpi-label">Operational</span><div><strong className="kpi-green">{loading ? '—' : summary.up}</strong><span className="kpi-icon icon-green"><Icon name="pulse" /></span></div><small>Latest recorded check</small></article>
             <article className="kpi-card"><span className="kpi-label">Down</span><div><strong className={summary.down ? 'kpi-red' : ''}>{loading ? '—' : summary.down}</strong><span className="kpi-icon icon-red"><Icon name="incidents" /></span></div><small>Latest recorded check</small></article>
             <article className="kpi-card"><span className="kpi-label">Availability</span><div><strong className="kpi-na">—</strong><span className="kpi-icon icon-neutral"><Icon name="clock" /></span></div><small>No aggregate window in API</small></article>
           </section>
           <div className="dashboard-grid">
             <section className="surface monitors-surface" aria-labelledby="monitor-heading"><div className="surface-heading"><div><h2 id="monitor-heading">{page === 'overview' ? 'Your monitors' : 'All monitors'} <span className="heading-count">{summary.total}</span></h2><p>Current status from the latest persisted check.</p></div><div className="surface-controls"><button className="secondary-button compact-refresh" type="button" onClick={loadEndpoints} aria-label="Refresh monitors"><Icon name="refresh" size={15} /> Refresh</button></div></div>
-              {loading ? <MonitorSkeleton /> : <MonitorTable scheduling={scheduling} endpoints={endpoints} checksByEndpoint={checksByEndpoint} expandedEndpointId={expandedEndpointId} checkingId={checkingId} deletingId={deletingId} historyLoadingId={historyLoadingId} error={pageError} onRetry={loadEndpoints} onCheck={runCheck} onDelete={(endpoint) => { setDeleteTarget(endpoint); setDeleteError(''); }} onHistory={toggleHistory} />}
+              {loading ? <MonitorSkeleton /> : <MonitorTable scheduling={scheduling} endpoints={endpoints} checksByEndpoint={checksByEndpoint} expandedEndpointId={expandedEndpointId} checkingId={checkingId} checkError={checkError} deletingId={deletingId} historyLoadingId={historyLoadingId} error={pageError} onRetry={loadEndpoints} onCheck={runCheck} onDelete={(endpoint) => { setDeleteTarget(endpoint); setDeleteError(''); }} onHistory={toggleHistory} />}
             </section>
             <aside className="activity-column"><section className="surface activity-surface"><div className="surface-heading activity-heading"><div><h2>Recent incidents</h2><p>From endpoint incident history.</p></div><button className="text-button" type="button" onClick={() => setPage('incidents')}>View all</button></div>
                 {incidentFeed.length ? <div className="activity-list">{incidentFeed.slice(0, 5).map((incident) => <div className="activity-item" key={incident.id}><span className={`activity-dot ${incident.resolvedAt ? 'activity-resolved' : ''}`} /><div><strong>{incident.endpointName}</strong><p>{incident.resolvedAt ? 'Incident resolved' : 'Incident open'} · {relativeDate(incident.resolvedAt || incident.openedAt)}</p></div></div>)}</div> : <div className="activity-empty"><span className="activity-empty-icon"><Icon name="incidents" size={16} /></span><p>No incident activity to show.</p></div>}
@@ -623,7 +645,7 @@ export default function App() {
         <footer className="page-footer"><span>PulseCheck <span className="footer-separator">·</span> API monitoring</span><span>Checks and incidents persisted in PostgreSQL</span></footer>
       </div>
     </main>
-    {formOpen && <AddMonitorDialog scheduling={scheduling} form={form} setForm={setForm} formError={formError} saving={saving} onClose={() => setFormOpen(false)} onSubmit={handleSubmit} />}
+    {formOpen && <AddMonitorDialog scheduling={scheduling} atMonitorLimit={atMonitorLimit} form={form} setForm={setForm} formError={formError} saving={saving} onClose={() => setFormOpen(false)} onSubmit={handleSubmit} />}
     {deleteTarget && <DeleteMonitorDialog endpoint={deleteTarget} busy={deletingId === deleteTarget.id} error={deleteError} onCancel={closeDeleteDialog} onConfirm={handleDeleteMonitor} />}
   </div>;
 }

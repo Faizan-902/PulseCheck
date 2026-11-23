@@ -1,4 +1,6 @@
 import pg from 'pg';
+import { DEFAULT_MAX_ENDPOINTS_PER_USER } from '../config/endpoint-limits.js';
+import { AppError } from '../middleware/errors.js';
 import { getIncidentTransition } from '../services/incident-policy.js';
 
 export function createEndpointModel(pool) {
@@ -59,16 +61,42 @@ export function createEndpointModel(pool) {
       await pool.query('SELECT 1');
     },
 
-    async createEndpoint({ ownerId, name, url, timeoutMs, checkIntervalSeconds = 300 }) {
-      const result = await pool.query(
-        `INSERT INTO monitored_endpoints (owner_id, name, url, timeout_ms, check_interval_seconds)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name, url, timeout_ms AS "timeoutMs",
-                   check_interval_seconds AS "checkIntervalSeconds",
-                   next_check_at AS "nextCheckAt", is_active AS "isActive", created_at AS "createdAt"`,
-        [ownerId, name, url, timeoutMs, checkIntervalSeconds]
-      );
-      return result.rows[0];
+    async createEndpoint({
+      ownerId, name, url, timeoutMs, checkIntervalSeconds = 300,
+      maxEndpointsPerUser = DEFAULT_MAX_ENDPOINTS_PER_USER
+    }) {
+      const client = await pool.connect();
+      try {
+        // Serialize creates by owner. The count runs after the lock is granted,
+        // so it sees a competing create that committed while this request waited.
+        await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+        const owner = await client.query('SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE', [ownerId]);
+        if (!owner.rowCount) throw new AppError(401, 'UNAUTHENTICATED', 'Please sign in to continue.');
+
+        const { rows: [{ count }] } = await client.query(
+          'SELECT count(*)::integer AS count FROM monitored_endpoints WHERE owner_id = $1',
+          [ownerId]
+        );
+        if (count >= maxEndpointsPerUser) {
+          throw new AppError(409, 'endpoint_limit_reached', `You can register up to ${maxEndpointsPerUser} monitors.`);
+        }
+
+        const result = await client.query(
+          `INSERT INTO monitored_endpoints (owner_id, name, url, timeout_ms, check_interval_seconds)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, name, url, timeout_ms AS "timeoutMs",
+                     check_interval_seconds AS "checkIntervalSeconds",
+                     next_check_at AS "nextCheckAt", is_active AS "isActive", created_at AS "createdAt"`,
+          [ownerId, name, url, timeoutMs, checkIntervalSeconds]
+        );
+        await client.query('COMMIT');
+        return result.rows[0];
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async listEndpoints(ownerId) {

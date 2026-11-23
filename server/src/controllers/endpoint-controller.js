@@ -1,7 +1,7 @@
 import { AppError } from '../middleware/errors.js';
 import { validateTargetUrl } from '../security/target-url.js';
 
-export function createEndpointController({ model, checkEndpoint, resolver, defaultTimeoutMs, scheduling }) {
+export function createEndpointController({ model, checkEndpoint, resolver, defaultTimeoutMs, scheduling, maxEndpointsPerUser }) {
   async function requireEndpoint(id, ownerId) {
     const endpoint = await model.findEndpointById(id, ownerId);
     if (!endpoint) throw new AppError(404, 'ENDPOINT_NOT_FOUND', 'The endpoint was not found.');
@@ -16,7 +16,8 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
         name: request.body.name,
         url: target.url.href,
         timeoutMs: request.body.timeoutMs ?? defaultTimeoutMs,
-        checkIntervalSeconds: request.body.checkIntervalSeconds ?? scheduling.defaultIntervalSeconds
+        checkIntervalSeconds: request.body.checkIntervalSeconds ?? scheduling.defaultIntervalSeconds,
+        maxEndpointsPerUser
       });
       response.status(201).json({ data: endpoint });
     },
@@ -24,7 +25,7 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
     async list(request, response) {
       response.json({
         data: await model.listEndpoints(request.user.id),
-        meta: { scheduling }
+        meta: { scheduling, maxEndpointsPerUser }
       });
     },
 
@@ -38,8 +39,13 @@ export function createEndpointController({ model, checkEndpoint, resolver, defau
       response.json({ data: { deleted: true } });
     },
 
+    async loadOwnedEndpoint(request, _response, next) {
+      request.endpoint = await requireEndpoint(request.params.id, request.user.id);
+      next();
+    },
+
     async check(request, response) {
-      const endpoint = await requireEndpoint(request.params.id, request.user.id);
+      const endpoint = request.endpoint;
       const result = await checkEndpoint(endpoint, { resolver });
       const saved = await model.createCheck({ endpointId: endpoint.id, ownerId: request.user.id, ...result });
       if (!saved) throw new AppError(404, 'ENDPOINT_NOT_FOUND', 'The endpoint was not found.');

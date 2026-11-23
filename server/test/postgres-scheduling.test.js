@@ -8,7 +8,7 @@ import { env } from '../src/config/env.js';
 import { createApp } from '../src/app.js';
 import { createEndpointModel } from '../src/models/endpoint-model.js';
 import { createAuthModel } from '../src/models/auth-model.js';
-import { createPostgresRateLimitStore } from '../src/models/postgres-rate-limit-store.js';
+import { createEndpointRateLimitStores, createPostgresRateLimitStore } from '../src/models/postgres-rate-limit-store.js';
 import { listMigrationFiles } from '../src/db/migration-files.js';
 import { applyMigrations } from '../src/db/migrate.js';
 import { cleanupExpiredData } from '../src/services/data-retention.js';
@@ -144,10 +144,97 @@ afterAll(async () => {
   await adminPool.end();
 });
 
+async function authenticateFixture(userId) {
+  const token = randomBytes(32).toString('base64url');
+  const csrfToken = randomBytes(32).toString('base64url');
+  await authModel.createSession({
+    userId,
+    tokenHash: createHash('sha256').update(token).digest('hex'),
+    csrfToken,
+    expiresAt: new Date(Date.now() + 60_000)
+  });
+  return { Cookie: `pulsecheck_session=${token}`, Origin: 'http://localhost:5173', 'X-CSRF-Token': csrfToken };
+}
+
+function monitorApi(pool, model, maxEndpointsPerUser) {
+  const stores = createEndpointRateLimitStores(pool);
+  const app = createApp({
+    model, authModel, maxEndpointsPerUser, endpointRateLimitStores: stores,
+    resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+    checkEndpoint: async () => ({ status: 'UP', httpStatus: 200, latencyMs: 10, errorType: null })
+  });
+  return { agent: request(app), stores };
+}
+
+describe('PostgreSQL monitor limits', () => {
+  afterEach(async () => {
+    await poolOne.query('DELETE FROM monitored_endpoints WHERE owner_id = ANY($1::uuid[])', [[ownerId, otherOwnerId]]);
+    await poolOne.query('DELETE FROM rate_limits');
+  });
+
+  it('serializes concurrent creates across API instances and isolates cap and hourly limits by user', async () => {
+    const [owner, other] = await Promise.all([authenticateFixture(ownerId), authenticateFixture(otherOwnerId)]);
+    const { agent: first } = monitorApi(poolOne, modelOne, 1);
+    const { agent: second } = monitorApi(poolTwo, modelTwo, 1);
+    const create = (agent, auth, name) => agent.post('/api/endpoints').set(auth)
+      .send({ name, url: 'https://api.example.com' });
+
+    const race = await Promise.all([create(first, owner, 'First'), create(second, owner, 'Concurrent')]);
+    expect(race.map(({ status }) => status).sort()).toEqual([201, 409]);
+    expect(race.find(({ status }) => status === 409).body.error.code).toBe('endpoint_limit_reached');
+    const list = await first.get('/api/endpoints').set(owner);
+    expect(list.body.data).toHaveLength(1);
+    expect(list.body.meta.maxEndpointsPerUser).toBe(1);
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      expect((await create(second, owner, 'At cap')).status).toBe(409);
+    }
+    const limited = await create(first, owner, 'Over rate');
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await create(second, other, 'Other user')).status).toBe(201);
+  });
+
+  it('shares the per-monitor cooldown and per-user check allowance across API instances', async () => {
+    const [owner, other] = await Promise.all([authenticateFixture(ownerId), authenticateFixture(otherOwnerId)]);
+    const first = monitorApi(poolOne, modelOne, 10);
+    const second = monitorApi(poolTwo, modelTwo, 10);
+    const create = async (auth) => {
+      const response = await first.agent.post('/api/endpoints').set(auth)
+        .send({ name: 'Monitor', url: 'https://api.example.com' });
+      expect(response.status).toBe(201);
+      return response.body.data.id;
+    };
+    const [id, otherId] = await Promise.all([create(owner), create(other)]);
+    const check = (agent, auth, endpoint) => agent.post(`/api/endpoints/${endpoint}/check`).set(auth);
+
+    const race = await Promise.all([
+      check(first.agent, owner, id),
+      check(second.agent, owner, id.toUpperCase())
+    ]);
+    expect(race.map(({ status }) => status).sort()).toEqual([201, 429]);
+    const cooldown = race.find(({ status }) => status === 429);
+    expect(Number(cooldown.headers['retry-after'])).toBeGreaterThan(0);
+    expect(cooldown.body.error.message).toContain('30 seconds');
+    expect(await modelOne.listChecks(id, 50, ownerId)).toHaveLength(1);
+
+    // Expire the per-monitor window between requests while keeping the hourly window.
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      await second.stores.checkEndpoint.resetKey(`${ownerId}:${id}`);
+      expect((await check(second.agent, owner, id)).status).toBe(201);
+    }
+    const hourly = await check(first.agent, owner, id);
+    expect(hourly.status).toBe(429);
+    expect(Number(hourly.headers['retry-after'])).toBeGreaterThan(30);
+    expect(hourly.body.error.message).toContain('20 manual checks');
+    expect((await check(second.agent, other, otherId)).status).toBe(201);
+  });
+});
+
 describe('PostgreSQL scheduled monitoring integration', () => {
   it('discovers migration 007 in runner order and applies its nullable-latency change in the disposable schema', async () => {
     const migrations = await listMigrationFiles(fileURLToPath(migrationDirectory));
-    expect(migrations.at(-1)).toBe('007_allow_unavailable_latency.sql');
+    expect(migrations.indexOf('007_allow_unavailable_latency.sql')).toBe(6);
     const nullable = await poolOne.query(
       `SELECT is_nullable FROM information_schema.columns
        WHERE table_schema = $1 AND table_name = 'check_results' AND column_name = 'latency_ms'`,

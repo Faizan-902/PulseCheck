@@ -147,6 +147,20 @@ describe('PulseCheck API', () => {
     expect(repository.createEndpoint).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['http://127.0.0.1/', 422],
+    ['http://10.1.2.3/', 422],
+    ['http://169.254.169.254/', 422],
+    ['http://localhost/', 422],
+    ['ftp://api.example.com/', 400],
+    ['https://user:secret@api.example.com/', 400]
+  ])('rejects invalid monitor destination %s before inserting', async (url, status) => {
+    const response = await apiRequestFor('post', '/api/endpoints').send({ name: 'Blocked', url });
+
+    expect(response.status).toBe(status);
+    expect(repository.createEndpoint).not.toHaveBeenCalled();
+  });
+
   it('creates an endpoint and uses the configured default timeout', async () => {
     const response = await apiRequestFor('post', '/api/endpoints')
       .send({ name: 'Public API', url: 'https://api.example.com/health' });
@@ -165,7 +179,8 @@ describe('PulseCheck API', () => {
       name: 'Public API',
       url: 'https://api.example.com/health',
       timeoutMs: 5000,
-      checkIntervalSeconds: 300
+      checkIntervalSeconds: 300,
+      maxEndpointsPerUser: 10
     });
     expect(publicResolver).toHaveBeenCalledWith('api.example.com');
   });

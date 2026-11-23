@@ -4,7 +4,7 @@ import { schedulingPolicy } from './config/scheduling.js';
 import { pool } from './db/pool.js';
 import { createEndpointModel } from './models/endpoint-model.js';
 import { createAuthModel } from './models/auth-model.js';
-import { createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
+import { createEndpointRateLimitStores, createPostgresRateLimitStore } from './models/postgres-rate-limit-store.js';
 
 const model = createEndpointModel(pool);
 const authModel = createAuthModel(pool);
@@ -12,6 +12,8 @@ const authModel = createAuthModel(pool);
 export const app = createApp({
   model,
   authModel,
+  maxEndpointsPerUser: env.MAX_ENDPOINTS_PER_USER,
+  endpointRateLimitStores: createEndpointRateLimitStores(pool),
   scheduling: schedulingPolicy(env.SCHEDULER_MODE, env.MIN_EFFECTIVE_INTERVAL_SECONDS),
   defaultTimeoutMs: env.CHECK_TIMEOUT_MS,
   frontendOrigin: env.FRONTEND_ORIGIN,

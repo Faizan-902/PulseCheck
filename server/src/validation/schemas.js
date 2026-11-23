@@ -35,7 +35,7 @@ export const registerEndpointSchema = ({ minIntervalSeconds, maxIntervalSeconds 
     .max(maxIntervalSeconds, `Use an interval of at most ${maxIntervalSeconds} seconds.`).optional()
 }).strict();
 
-export const endpointIdSchema = z.object({ id: z.string().uuid() });
+export const endpointIdSchema = z.object({ id: z.string().uuid().toLowerCase() });
 
 export const checksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50)
