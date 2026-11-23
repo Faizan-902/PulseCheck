@@ -74,6 +74,18 @@ export function useLatencyHistory({ page, endpoints, csrfToken }) {
     setLatencyRefreshToken((current) => current + 1);
   }, []);
 
+  function showSavedCheck(endpointId, check) {
+    if (selectedLatencyEndpointId === endpointId) {
+      setLatencyChecks((current) =>
+        [check, ...current.filter((item) => item.id !== check.id)].slice(0, 100)
+      );
+      setLatencyError('');
+      refreshLatencyHistory();
+    } else {
+      setSelectedLatencyEndpointId(endpointId);
+    }
+  }
+
   function clearForMonitor(id) {
     setSelectedLatencyEndpointId((current) => (current === id ? '' : current));
     setLatencyChecks([]);
@@ -89,6 +101,7 @@ export function useLatencyHistory({ page, endpoints, csrfToken }) {
       error: latencyError,
       onRefresh: refreshLatencyHistory
     },
-    clearForMonitor
+    clearForMonitor,
+    showSavedCheck
   };
 }

@@ -287,3 +287,29 @@ p { line-height: 1.55; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Check feedback overlays the viewport without moving monitor rows or the chart. */
+.success-banner {
+  position: fixed;
+  z-index: 8;
+  right: var(--gutter);
+  bottom: 20px;
+  width: min(520px, calc(100vw - 2 * var(--gutter)));
+  margin: 0;
+  border: 1px solid #bad5c6;
+  box-shadow: 0 8px 28px #28272420;
+}
+.check-button { min-width: 85px; }
+.monitor-check-error {
+  position: fixed;
+  z-index: 8;
+  right: var(--gutter);
+  bottom: 20px;
+  width: min(520px, calc(100vw - 2 * var(--gutter)));
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #e5b5b8;
+  border-radius: 12px;
+  background: var(--red-bg);
+  box-shadow: 0 8px 28px #28272420;
+}

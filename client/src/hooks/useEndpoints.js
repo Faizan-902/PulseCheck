@@ -164,11 +164,11 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
     setNotice('');
     try {
       const check = await apiRequest(`/endpoints/${endpoint.id}/check`, { method: 'POST' }, csrfToken);
+      latency.showSavedCheck(endpoint.id, check);
       const httpStatus = check.httpStatus ? ` · HTTP ${check.httpStatus}` : '';
       setNotice(`${endpoint.name}: ${check.status}${httpStatus} · ${check.latencyMs} ms`);
       await loadEndpoints();
       if (expandedEndpointId === endpoint.id) await loadHistory(endpoint.id);
-      if (latency.panel.selectedEndpointId === endpoint.id) latency.panel.onRefresh();
     } catch (error) {
       if ([403, 429].includes(error.status)) {
         setCheckError({ endpointId: endpoint.id, message: error.message });
