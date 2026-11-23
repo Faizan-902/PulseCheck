@@ -67,7 +67,6 @@ export default function App() {
   }
   return (
     <Dashboard
-      user={auth.user}
       page={page}
       setPage={setPage}
       handleLogout={handleLogout}

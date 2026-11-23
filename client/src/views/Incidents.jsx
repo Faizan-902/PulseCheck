@@ -7,7 +7,6 @@ export function Incidents({ incidentFeed, incidentsLoading, pageError, viewMonit
     <>
       <section className="page-heading">
         <div>
-          <p className="eyebrow">MONITORING</p>
           <h1>Incidents</h1>
           <p className="heading-copy">Availability incidents recorded for your monitors.</p>
         </div>

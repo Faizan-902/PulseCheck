@@ -4,7 +4,7 @@ import { LatencyPanel } from '../components/LatencyChart.jsx';
 import { MonitorList, MonitorSkeleton } from '../components/MonitorList.jsx';
 import { RecentIncidents } from '../components/RecentIncidents.jsx';
 
-function MonitorSummary({ summary, loading, maxEndpointsPerUser }) {
+function MonitorSummary({ summary, loading, maxEndpointsPerUser, openIncidents }) {
   return (
     <section className="kpi-grid" aria-label="Monitor summary">
       <article className="kpi-card">
@@ -42,14 +42,14 @@ function MonitorSummary({ summary, loading, maxEndpointsPerUser }) {
         <small>Latest recorded check</small>
       </article>
       <article className="kpi-card">
-        <span className="kpi-label">Availability</span>
+        <span className="kpi-label">Open incidents</span>
         <div>
-          <strong className="kpi-na">—</strong>
+          <strong>{loading ? '—' : openIncidents}</strong>
           <span className="kpi-icon icon-neutral">
-            <Icon name="clock" />
+            <Icon name="incidents" />
           </span>
         </div>
-        <small>No aggregate window in API</small>
+        <small>Across all monitors</small>
       </article>
     </section>
   );
@@ -79,23 +79,27 @@ export function MonitorOverview({ page, messages, monitors, viewIncidents }) {
 
   return (
     <>
-      <section className="page-heading">
+      <section className="page-heading workspace-hero">
         <div>
-          <p className="eyebrow">API OBSERVABILITY</p>
           <h1>{page === 'overview' ? 'Monitoring overview' : 'Monitors'}</h1>
           <p className="heading-copy">
             {page === 'overview'
-              ? 'A clear view of endpoint health and recent check activity.'
-              : 'Manage your registered endpoints and inspect their check history.'}
+              ? 'Track endpoint health, response times, and incidents in one place.'
+              : 'Manage your endpoints and inspect their check history.'}
           </p>
         </div>
-        <span className="updated-label">
-          <Icon name="clock" size={14} /> Data from PostgreSQL
-        </span>
       </section>
       <ErrorBanner message={pageError} action={pageErrorAction} onDismiss={clearPageError} />
       <SuccessBanner message={notice} onDismiss={dismissNotice} />
-      <MonitorSummary summary={summary} loading={loading} maxEndpointsPerUser={maxEndpointsPerUser} />
+      <MonitorSummary
+        summary={summary}
+        loading={loading}
+        maxEndpointsPerUser={maxEndpointsPerUser}
+        openIncidents={endpoints.reduce(
+          (count, endpoint) => count + (endpoint.open_incident_count ?? 0),
+          0
+        )}
+      />
       <div className="dashboard-grid">
         <section className="surface monitors-surface" aria-labelledby="monitor-heading">
           <div className="surface-heading">

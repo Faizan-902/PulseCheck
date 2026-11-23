@@ -1,10 +1,10 @@
 import { AddMonitorDialog } from '../components/AddMonitorDialog.jsx';
-import { Sidebar, Topbar } from '../components/DashboardNavigation.jsx';
+import { Topbar } from '../components/DashboardNavigation.jsx';
 import { DeleteMonitorDialog } from '../components/DeleteMonitorDialog.jsx';
 import { Incidents } from './Incidents.jsx';
 import { MonitorOverview } from './MonitorOverview.jsx';
 
-export function Dashboard({ user, page, setPage, handleLogout, messages, monitors, incidents }) {
+export function Dashboard({ page, setPage, handleLogout, messages, monitors, incidents }) {
   const { summary, loading, maxEndpointsPerUser, scheduling, hasOpenIncidents } = monitors;
   const { clearPageError, pageError, setPageError } = messages;
   const atMonitorLimit = maxEndpointsPerUser != null && summary.total >= maxEndpointsPerUser;
@@ -32,27 +32,18 @@ export function Dashboard({ user, page, setPage, handleLogout, messages, monitor
 
   return (
     <div className="app-shell">
-      <Sidebar
-        user={user}
+      <Topbar
         page={page}
         onNavigate={navigate}
-        summary={summary}
         hasOpenIncidents={hasOpenIncidents}
-        currentDown={currentDown}
-        systemPending={systemPending}
+        systemTone={systemTone}
         systemLabel={systemLabel}
+        canAddMonitor={Boolean(scheduling) && !atMonitorLimit}
+        atMonitorLimit={atMonitorLimit}
+        openForm={monitors.openForm}
         handleLogout={handleLogout}
       />
-      <main className="main-area">
-        <Topbar
-          page={page}
-          systemTone={systemTone}
-          systemLabel={systemLabel}
-          canAddMonitor={Boolean(scheduling) && !atMonitorLimit}
-          atMonitorLimit={atMonitorLimit}
-          openForm={monitors.openForm}
-          handleLogout={handleLogout}
-        />
+      <main id="overview" className="main-area">
         <div className="page-content">
           {page === 'incidents' ? (
             <Incidents
@@ -74,7 +65,6 @@ export function Dashboard({ user, page, setPage, handleLogout, messages, monitor
             <span>
               PulseCheck <span className="footer-separator">·</span> API monitoring
             </span>
-            <span>Checks and incidents persisted in PostgreSQL</span>
           </footer>
         </div>
       </main>
