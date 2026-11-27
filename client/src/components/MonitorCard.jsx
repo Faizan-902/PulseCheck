@@ -7,6 +7,7 @@ export function MonitorCard({
   expanded,
   checkingId,
   checkError,
+  cooldownSeconds = 0,
   deletingId,
   historyLoadingId,
   scheduling,
@@ -64,15 +65,23 @@ export function MonitorCard({
           </button>
           <button
             className="check-button"
-            disabled={checkingId === endpoint.id}
+            disabled={checkingId === endpoint.id || cooldownSeconds > 0}
             onClick={() => onCheck(endpoint)}
             type="button"
-            aria-label={`Check ${endpoint.name}`}
+            aria-label={
+              cooldownSeconds > 0
+                ? `Wait ${cooldownSeconds} ${cooldownSeconds === 1 ? 'second' : 'seconds'} before checking ${endpoint.name}`
+                : `Check ${endpoint.name}`
+            }
           >
             {checkingId === endpoint.id ? (
               <>
                 <span className="button-spinner" />
                 Checking
+              </>
+            ) : cooldownSeconds > 0 ? (
+              <>
+                <Icon name="clock" size={13} /> {cooldownSeconds}s
               </>
             ) : (
               <>
@@ -92,7 +101,9 @@ export function MonitorCard({
       </div>
       {checkError?.endpointId === endpoint.id && (
         <p className="detail-error monitor-check-error" role="alert">
-          {checkError.message}
+          {checkError.isCooldown && cooldownSeconds > 0
+            ? `Wait ${cooldownSeconds} ${cooldownSeconds === 1 ? 'second' : 'seconds'} between manual checks of this monitor.`
+            : checkError.message}
         </p>
       )}
       {expanded && (

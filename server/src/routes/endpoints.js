@@ -35,9 +35,9 @@ export function createEndpointsRouter(dependencies) {
   router.post('/:id/check',
     requireCsrf,
     validate(endpointIdSchema, 'params'),
-    limits.checkUser,
     controller.loadOwnedEndpoint,
     limits.checkEndpoint,
+    limits.checkUser,
     controller.check
   );
   router.get('/:id/checks',

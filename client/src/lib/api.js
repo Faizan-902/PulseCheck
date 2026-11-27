@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 export async function apiRequest(path, options = {}, csrfToken = '', includeMetadata = false) {
   let response;
@@ -24,6 +24,10 @@ export async function apiRequest(path, options = {}, csrfToken = '', includeMeta
     error.status = response.status;
     error.code = payload?.error?.code;
     error.details = payload?.error?.details;
+    const retryAfter = response.headers.get('Retry-After')?.trim();
+    if (retryAfter && /^\d+$/.test(retryAfter)) {
+      error.retryAfterSeconds = Number(retryAfter);
+    }
     throw error;
   }
   return includeMetadata ? payload : payload.data;

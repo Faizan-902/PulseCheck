@@ -8,6 +8,7 @@ export function MonitorList({
   expandedEndpointId,
   checkingId,
   checkError,
+  cooldownSecondsByEndpoint = {},
   deletingId,
   historyLoadingId,
   error,
@@ -45,6 +46,7 @@ export function MonitorList({
             expanded={expandedEndpointId === endpoint.id}
             checkingId={checkingId}
             checkError={checkError}
+            cooldownSeconds={cooldownSecondsByEndpoint[endpoint.id] || 0}
             deletingId={deletingId}
             historyLoadingId={historyLoadingId}
             scheduling={scheduling}

@@ -4,7 +4,7 @@ import { DeleteMonitorDialog } from '../components/DeleteMonitorDialog.jsx';
 import { Incidents } from './Incidents.jsx';
 import { MonitorOverview } from './MonitorOverview.jsx';
 
-export function Dashboard({ page, setPage, handleLogout, messages, monitors, incidents }) {
+export function Dashboard({ page, setPage, user, signingOut, handleLogout, messages, monitors, incidents }) {
   const { summary, loading, maxEndpointsPerUser, scheduling, hasOpenIncidents } = monitors;
   const { clearPageError, pageError, setPageError } = messages;
   const atMonitorLimit = maxEndpointsPerUser != null && summary.total >= maxEndpointsPerUser;
@@ -41,6 +41,11 @@ export function Dashboard({ page, setPage, handleLogout, messages, monitors, inc
         canAddMonitor={Boolean(scheduling) && !atMonitorLimit}
         atMonitorLimit={atMonitorLimit}
         openForm={monitors.openForm}
+        user={user}
+        monitorCount={summary.total}
+        maxEndpointsPerUser={maxEndpointsPerUser}
+        scheduling={scheduling}
+        signingOut={signingOut}
         handleLogout={handleLogout}
       />
       <main id="overview" className="main-area">
@@ -50,7 +55,7 @@ export function Dashboard({ page, setPage, handleLogout, messages, monitors, inc
               incidentFeed={incidents.feed}
               incidentsLoading={incidents.loading}
               pageError={pageError}
-              viewMonitors={() => setPage('overview')}
+              viewMonitors={() => navigate('overview')}
               dismissError={() => setPageError('')}
             />
           ) : (
@@ -58,7 +63,7 @@ export function Dashboard({ page, setPage, handleLogout, messages, monitors, inc
               page={page}
               messages={messages}
               monitors={monitors}
-              viewIncidents={() => setPage('incidents')}
+              viewIncidents={() => navigate('incidents')}
             />
           )}
           <footer className="page-footer">

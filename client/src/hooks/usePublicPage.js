@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 function readPage() {
-  const page = window.location.hash.slice(1);
+  const [page] = window.location.hash.slice(1).split('?');
   return ['signin', 'signup'].includes(page) ? page : 'home';
 }
 

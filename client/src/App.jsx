@@ -12,6 +12,7 @@ export default function App() {
   const [pageError, setPageError] = useState('');
   const [pageErrorAction, setPageErrorAction] = useState(null);
   const [notice, setNotice] = useState('');
+  const [signingOut, setSigningOut] = useState(false);
   const auth = useAuth();
   const publicPage = usePublicPage();
   const messages = {
@@ -34,19 +35,28 @@ export default function App() {
     page,
     messages
   });
-  const incidents = useIncidentFeed({ page, csrfToken: auth.csrfToken, setPageError });
+  const incidents = useIncidentFeed({
+    enabled: Boolean(auth.user && auth.csrfToken),
+    page,
+    csrfToken: auth.csrfToken,
+    setPageError
+  });
 
   async function handleAuthenticate(mode, credentials) {
     await auth.authenticate(mode, credentials);
     monitors.resetPolicy();
     setPage('overview');
+    messages.clearPageError();
     messages.dismissNotice();
   }
 
   async function handleLogout() {
+    if (signingOut) return;
+    setSigningOut(true);
     try {
       await auth.logout();
       window.location.hash = 'home';
+      setPage('overview');
       monitors.clearMonitors();
       incidents.clear();
       messages.clearPageError();
@@ -54,6 +64,8 @@ export default function App() {
     } catch (error) {
       setPageError(error.message);
       setPageErrorAction({ label: 'Retry sign out', run: handleLogout });
+    } finally {
+      setSigningOut(false);
     }
   }
 
@@ -82,6 +94,8 @@ export default function App() {
     <Dashboard
       page={page}
       setPage={setPage}
+      user={auth.user}
+      signingOut={signingOut}
       handleLogout={handleLogout}
       messages={messages}
       monitors={monitors}

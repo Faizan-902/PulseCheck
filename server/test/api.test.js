@@ -373,4 +373,32 @@ describe('PulseCheck API', () => {
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('CSRF_INVALID');
   });
+
+  it('does not burn hourly check quota or reset the 30s cooldown on repeated check clicks', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      await apiRequestFor('post', '/api/endpoints').send({
+        name: 'Public API',
+        url: 'https://api.example.com/health'
+      });
+
+      expect((await apiRequestFor('post', `/api/endpoints/${endpointId}/check`)).status).toBe(201);
+
+      vi.advanceTimersByTime(12_000);
+      for (let click = 0; click < 25; click += 1) {
+        const blocked = await apiRequestFor('post', `/api/endpoints/${endpointId}/check`);
+        expect(blocked.status).toBe(429);
+        expect(Number(blocked.headers['retry-after'])).toBe(18);
+        expect(blocked.body.error.message).toContain('18 seconds');
+      }
+
+      // Advance past the original 30s window (12s + 19s = 31s) — must succeed without reset.
+      vi.advanceTimersByTime(19_000);
+      expect((await apiRequestFor('post', `/api/endpoints/${endpointId}/check`)).status).toBe(201);
+      expect(checkEndpoint).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

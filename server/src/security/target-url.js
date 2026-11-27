@@ -2,6 +2,8 @@ import dns from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
 import { Agent } from 'undici';
 
+const IPV4_COMPATIBLE_IPV6 = ipaddr.parseCIDR('::/96');
+
 const BLOCKED_HOST_SUFFIXES = [
   '.localhost',
   '.local',
@@ -22,14 +24,17 @@ export class TargetValidationError extends Error {
 }
 
 function normalizeHostname(hostname) {
-  return hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  return hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
 }
 
 function isPublicAddress(address) {
   try {
     const parsed = ipaddr.parse(address);
-    // Reject mapped IPv4 in IPv6 form to prevent address-family filter bypasses.
-    if (parsed.kind() === 'ipv6' && parsed.isIPv4MappedAddress()) return false;
+    // Reject IPv4-mapped (::ffff:0:0/96) and deprecated IPv4-compatible (::/96) IPv6
+    // addresses to prevent IPv4 range-check bypasses via IPv6 notation.
+    if (parsed.kind() === 'ipv6' && (parsed.isIPv4MappedAddress() || parsed.match(IPV4_COMPATIBLE_IPV6))) {
+      return false;
+    }
     return parsed.range() === 'unicast';
   } catch {
     return false;

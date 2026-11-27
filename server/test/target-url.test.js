@@ -12,13 +12,15 @@ describe('target URL safety', () => {
     expect(result.addresses).toEqual([{ address: '93.184.216.34', family: 4 }]);
   });
 
-  it('rejects local hostnames before DNS lookup', async () => {
+  it('rejects local hostnames with one or more trailing dots before DNS lookup', async () => {
     let lookedUp = false;
 
-    await expect(validateTargetUrl('http://localhost:8080/health', async () => {
-      lookedUp = true;
-      return publicAnswers();
-    })).rejects.toMatchObject({ code: 'UNSAFE_TARGET' });
+    for (const url of ['http://localhost:8080/health', 'http://localhost../health']) {
+      await expect(validateTargetUrl(url, async () => {
+        lookedUp = true;
+        return publicAnswers();
+      })).rejects.toMatchObject({ code: 'UNSAFE_TARGET' });
+    }
 
     expect(lookedUp).toBe(false);
   });
@@ -30,9 +32,17 @@ describe('target URL safety', () => {
     'http://100.64.0.1/',
     'http://169.254.169.254/latest/meta-data/',
     'http://[::ffff:127.0.0.1]/',
+    'http://[::127.0.0.1]/',
+    'http://[::169.254.169.254]/',
+    'http://[::10.0.0.1]/',
     'http://[fd00::1]/'
   ])('rejects non-public IP literal %s', async (url) => {
     await expect(validateTargetUrl(url)).rejects.toMatchObject({ code: 'UNSAFE_TARGET' });
+  });
+
+  it('accepts a public global unicast IPv6 literal', async () => {
+    const result = await validateTargetUrl('https://[2606:2800:220:1:248:1893:25c8:1946]/');
+    expect(result.addresses).toEqual([{ address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }]);
   });
 
   it('rejects a mixed public and private DNS answer set', async () => {

@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/api.js';
+import {
+  shouldClearLatencyOnMonitorDelete,
+  shouldFetchLatencyHistory
+} from './fetch-guards.js';
 
-export function useLatencyHistory({ page, endpoints, csrfToken }) {
+export function useLatencyHistory({ enabled, page, endpoints, csrfToken }) {
   const [selectedLatencyEndpointId, setSelectedLatencyEndpointId] = useState('');
   const [latencyChecks, setLatencyChecks] = useState([]);
   const [latencyLoading, setLatencyLoading] = useState(false);
   const [latencyRefreshing, setLatencyRefreshing] = useState(false);
   const [latencyError, setLatencyError] = useState('');
   const [latencyRefreshToken, setLatencyRefreshToken] = useState(0);
+  const shouldFetch = shouldFetchLatencyHistory({
+    enabled,
+    page,
+    selectedEndpointId: selectedLatencyEndpointId
+  });
 
   useEffect(() => {
     if (!endpoints.some((endpoint) => endpoint.id === selectedLatencyEndpointId)) {
@@ -21,12 +30,13 @@ export function useLatencyHistory({ page, endpoints, csrfToken }) {
   }, [selectedLatencyEndpointId]);
 
   useEffect(() => {
-    if (page === 'incidents') return undefined;
-    if (!selectedLatencyEndpointId) {
-      setLatencyChecks([]);
+    if (!shouldFetch) {
       setLatencyLoading(false);
       setLatencyRefreshing(false);
-      setLatencyError('');
+      if (!enabled || !selectedLatencyEndpointId) {
+        setLatencyChecks([]);
+        setLatencyError('');
+      }
       return undefined;
     }
 
@@ -68,7 +78,7 @@ export function useLatencyHistory({ page, endpoints, csrfToken }) {
       window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [page, selectedLatencyEndpointId, csrfToken, latencyRefreshToken]);
+  }, [shouldFetch, selectedLatencyEndpointId, csrfToken, latencyRefreshToken]);
 
   const refreshLatencyHistory = useCallback(() => {
     setLatencyRefreshToken((current) => current + 1);
@@ -87,8 +97,12 @@ export function useLatencyHistory({ page, endpoints, csrfToken }) {
   }
 
   function clearForMonitor(id) {
-    setSelectedLatencyEndpointId((current) => (current === id ? '' : current));
+    if (!shouldClearLatencyOnMonitorDelete({ selectedEndpointId: selectedLatencyEndpointId, deletedEndpointId: id })) {
+      return;
+    }
+    setSelectedLatencyEndpointId('');
     setLatencyChecks([]);
+    setLatencyError('');
   }
 
   return {

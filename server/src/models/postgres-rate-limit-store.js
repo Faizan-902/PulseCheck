@@ -51,6 +51,16 @@ function createStore(pool, namespace, table) {
       windowMs = options.windowMs;
     },
 
+    async get(key) {
+      const result = await pool.query(
+        `SELECT hits AS "totalHits", reset_at AS "resetTime"
+         FROM ${table}
+         WHERE key_hash = $1 AND reset_at > clock_timestamp()`,
+        [keyHash(key)]
+      );
+      return result.rows[0];
+    },
+
     async increment(key) {
       const result = await pool.query(
         `INSERT INTO ${table} AS limits (key_hash, hits, reset_at)

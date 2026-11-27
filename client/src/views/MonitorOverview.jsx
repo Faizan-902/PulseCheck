@@ -68,6 +68,7 @@ export function MonitorOverview({ page, messages, monitors, viewIncidents }) {
     expandedEndpointId,
     checkingId,
     checkError,
+    cooldownSecondsByEndpoint,
     deletingId,
     historyLoadingId,
     runCheck,
@@ -131,6 +132,7 @@ export function MonitorOverview({ page, messages, monitors, viewIncidents }) {
               expandedEndpointId={expandedEndpointId}
               checkingId={checkingId}
               checkError={checkError}
+              cooldownSecondsByEndpoint={cooldownSecondsByEndpoint}
               deletingId={deletingId}
               historyLoadingId={historyLoadingId}
               error={pageError}

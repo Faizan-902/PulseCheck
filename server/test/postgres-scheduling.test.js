@@ -258,8 +258,15 @@ describe('PostgreSQL monitor limits', () => {
     expect(cooldown.body.error.message).toContain('30 seconds');
     expect(await modelOne.listChecks(id, 50, ownerId)).toHaveLength(1);
 
+    // Continuous clicks during the 30s cooldown must not burn hourly quota or reset the timer.
+    for (let click = 0; click < 5; click += 1) {
+      const blocked = await check(first.agent, owner, id);
+      expect(blocked.status).toBe(429);
+      expect(Number(blocked.headers['retry-after'])).toBeLessThanOrEqual(30);
+    }
+
     // Expire the per-monitor window between requests while keeping the hourly window.
-    for (let attempt = 0; attempt < 18; attempt += 1) {
+    for (let attempt = 0; attempt < 19; attempt += 1) {
       await second.stores.checkEndpoint.resetKey(`${ownerId}:${id}`);
       expect((await check(second.agent, owner, id)).status).toBe(201);
     }

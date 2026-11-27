@@ -24,6 +24,13 @@ export async function cleanupExpiredData({
   const sessions = await deleteBatches(
     (limit) => authModel.deleteExpiredSessionsBatch(limit), batchSize, maxBatches
   );
+  if (typeof authModel.deleteExpiredOAuthStatesBatch === 'function') {
+    const oauthStates = await deleteBatches(
+      (limit) => authModel.deleteExpiredOAuthStatesBatch(limit), batchSize, maxBatches
+    );
+    sessions.deleted += oauthStates.deleted;
+    sessions.hasMore ||= oauthStates.hasMore;
+  }
   const rateLimits = await deleteBatches(
     (limit) => rateLimitStore.deleteExpiredBatch(limit), batchSize, maxBatches
   );

@@ -7,7 +7,7 @@ export function hashSecret(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function readCookie(header, name) {
+export function readCookie(header, name) {
   for (const part of (header || '').split(';')) {
     const separator = part.indexOf('=');
     if (separator < 0) continue;

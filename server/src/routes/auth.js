@@ -20,6 +20,9 @@ export function createAuthRouter({
   cookieSecure,
   cookieSameSite,
   sessionTtlHours,
+  frontendOrigin,
+  googleOAuth,
+  googleRedirectUri,
   loginRateLimitStore,
   signupRateLimitStore,
   loginRateLimit = { windowMs: 15 * 60 * 1000, limit: 10 },
@@ -30,7 +33,15 @@ export function createAuthRouter({
     response.setHeader('Cache-Control', 'no-store');
     next();
   });
-  const controller = createAuthController({ authModel, cookieSecure, cookieSameSite, sessionTtlHours });
+  const controller = createAuthController({
+    authModel,
+    cookieSecure,
+    cookieSameSite,
+    sessionTtlHours,
+    frontendOrigin,
+    googleOAuth,
+    googleRedirectUri
+  });
   const createAuthLimiter = (config, store, code, message) => rateLimit({
     windowMs: config.windowMs,
     limit: config.limit,
@@ -46,6 +57,8 @@ export function createAuthRouter({
 
   router.post('/signup', signupLimiter, validate(signupSchema), controller.signup);
   router.post('/login', loginLimiter, validate(loginSchema), controller.login);
+  router.get('/google', loginLimiter, controller.googleStart);
+  router.get('/google/callback', loginLimiter, controller.googleCallback);
   router.get('/me', authentication.requireAuthentication, controller.currentUser);
   router.post('/logout', authentication.requireAuthentication, authentication.requireCsrf, controller.logout);
   return router;

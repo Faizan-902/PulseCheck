@@ -150,4 +150,68 @@ describe('production environment validation', () => {
     expect(oversized.status).not.toBe(0);
     expect(oversized.stderr).toContain('PGPOOL_MAX');
   });
+
+  it('enables one proxy hop by default on Vercel and disables trust proxy otherwise', () => {
+    const readTrustProxy = (extraEnv = {}) => {
+      const childEnv = {
+        ...process.env,
+        PULSECHECK_DISABLE_DOTENV: 'true',
+        PGHOST: '127.0.0.1',
+        PGDATABASE: 'pulsecheck_config_test',
+        PGUSER: 'pulsecheck_test',
+        PGPASSWORD: 'test-only-password',
+        PGSSLMODE: 'require',
+        FRONTEND_ORIGIN: 'https://dashboard.example',
+        SESSION_COOKIE_SECURE: 'true',
+        ...extraEnv
+      };
+      delete childEnv.TRUST_PROXY;
+      return spawnSync(process.execPath, [
+        '--input-type=module',
+        '-e',
+        "import('./src/config/env.js').then(({ env }) => process.stdout.write(JSON.stringify({ trustProxy: env.TRUST_PROXY })))"
+      ], {
+        cwd: serverDirectory,
+        encoding: 'utf8',
+        env: childEnv
+      });
+    };
+
+    const vercelEnv = readTrustProxy({ VERCEL: '1', NODE_ENV: 'production' });
+    expect(vercelEnv.status).toBe(0);
+    expect(JSON.parse(vercelEnv.stdout)).toEqual({ trustProxy: 1 });
+
+    const localEnv = readTrustProxy({ VERCEL: '', NODE_ENV: 'development', PGSSLMODE: 'disable', SESSION_COOKIE_SECURE: 'false', FRONTEND_ORIGIN: 'http://localhost:5173' });
+    expect(localEnv.status).toBe(0);
+    expect(JSON.parse(localEnv.stdout)).toEqual({ trustProxy: 0 });
+  });
+
+  it('requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to be configured together', () => {
+    const partial = spawnSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      "import('./src/config/env.js').then(() => process.exit(2)).catch((error) => process.stdout.write(JSON.stringify({ code: error.code, variables: error.invalidVariables })))"
+    ], {
+      cwd: serverDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PULSECHECK_DISABLE_DOTENV: 'true',
+        NODE_ENV: 'development',
+        PGHOST: '127.0.0.1',
+        PGDATABASE: 'pulsecheck_config_test',
+        PGUSER: 'pulsecheck_test',
+        PGPASSWORD: 'test-only-password',
+        PGSSLMODE: 'disable',
+        GOOGLE_CLIENT_ID: 'only-id-set',
+        GOOGLE_CLIENT_SECRET: ''
+      }
+    });
+
+    expect(partial.status).toBe(0);
+    expect(JSON.parse(partial.stdout)).toMatchObject({
+      code: 'INVALID_ENVIRONMENT_CONFIGURATION',
+      variables: ['GOOGLE_CLIENT_SECRET']
+    });
+  });
 });

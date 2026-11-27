@@ -1,3 +1,5 @@
+import React from 'react';
+
 export function Icon({ name, size = 18 }) {
   const paths = {
     pulse: (
@@ -46,6 +48,19 @@ export function Icon({ name, size = 18 }) {
       </>
     ),
     chevron: <path d="m7 10 5 5 5-5" />,
+    user: (
+      <>
+        <circle cx="12" cy="8.5" r="3.5" />
+        <path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" />
+      </>
+    ),
+    logout: (
+      <>
+        <path d="M10 17l5-5-5-5" />
+        <path d="M15 12H4" />
+        <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" />
+      </>
+    ),
     close: <path d="m18 6-12 12M6 6l12 12" />,
     arrow: (
       <>

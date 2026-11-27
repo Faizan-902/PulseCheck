@@ -1,7 +1,13 @@
 import argon2 from 'argon2';
 import { randomBytes } from 'node:crypto';
 import { AppError } from '../middleware/errors.js';
-import { hashSecret, SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/authentication.js';
+import {
+  hashSecret,
+  readCookie,
+  SESSION_COOKIE_NAME,
+  sessionCookieOptions
+} from '../middleware/authentication.js';
+import { createPkceChallenge } from '../services/google-oauth.js';
 
 const ARGON2_OPTIONS = {
   type: argon2.argon2id,
@@ -15,8 +21,25 @@ function publicUser(user) {
   return { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt };
 }
 
-export function createAuthController({ authModel, cookieSecure, cookieSameSite, sessionTtlHours }) {
+const OAUTH_COOKIE_NAME = 'pulsecheck_oauth';
+const OAUTH_TTL_MS = 10 * 60 * 1000;
+
+export function createAuthController({
+  authModel,
+  cookieSecure,
+  cookieSameSite,
+  sessionTtlHours,
+  frontendOrigin = 'http://localhost:5173',
+  googleOAuth = null,
+  googleRedirectUri = null
+}) {
   const cookieOptions = sessionCookieOptions({ secure: cookieSecure, sameSite: cookieSameSite });
+  const oauthCookieOptions = {
+    httpOnly: true,
+    secure: cookieSecure,
+    sameSite: 'lax',
+    path: '/api/auth/google'
+  };
 
   function issueSession(response, user, csrfToken, sessionToken) {
     response.cookie(SESSION_COOKIE_NAME, sessionToken, {
@@ -61,10 +84,10 @@ export function createAuthController({ authModel, cookieSecure, cookieSameSite, 
     async login(request, response) {
       const user = await authModel.findUserByEmail(request.body.email);
       let passwordIsValid = false;
-      if (user) {
+      if (user?.passwordHash) {
         passwordIsValid = await argon2.verify(user.passwordHash, request.body.password).catch(() => false);
       } else {
-        // Keep the missing-account path close to the normal Argon2 verification cost.
+        // Keep the missing-account and Google-only path close to normal Argon2 cost.
         await argon2.verify(DUMMY_PASSWORD_HASH, request.body.password).catch(() => false);
       }
       if (!user || !passwordIsValid) {
@@ -79,6 +102,103 @@ export function createAuthController({ authModel, cookieSecure, cookieSameSite, 
         expiresAt: session.expiresAt
       });
       issueSession(response, user, session.csrfToken, session.token);
+    },
+
+    async googleStart(_request, response) {
+      if (!googleOAuth) {
+        response.redirect(302, `${frontendOrigin}/#signin?authError=google_not_configured`);
+        return;
+      }
+
+      const state = randomBytes(32).toString('base64url');
+      const bindingToken = randomBytes(32).toString('base64url');
+      const codeVerifier = randomBytes(32).toString('base64url');
+      const nonce = randomBytes(32).toString('base64url');
+      const redirectUri = googleRedirectUri || `${frontendOrigin}/api/auth/google/callback`;
+
+      await authModel.createOAuthState({
+        stateHash: hashSecret(state),
+        bindingHash: hashSecret(bindingToken),
+        codeVerifier,
+        nonce,
+        redirectUri,
+        expiresAt: new Date(Date.now() + OAUTH_TTL_MS)
+      });
+
+      response.cookie(OAUTH_COOKIE_NAME, bindingToken, {
+        ...oauthCookieOptions,
+        maxAge: OAUTH_TTL_MS
+      });
+      response.redirect(
+        302,
+        googleOAuth.authorizationUrl({
+          redirectUri,
+          state,
+          nonce,
+          codeChallenge: createPkceChallenge(codeVerifier)
+        })
+      );
+    },
+
+    async googleCallback(request, response) {
+      const fail = (errorCode = 'google_auth_failed') => {
+        response.clearCookie(OAUTH_COOKIE_NAME, oauthCookieOptions);
+        response.redirect(302, `${frontendOrigin}/#signin?authError=${errorCode}`);
+      };
+
+      if (!googleOAuth) {
+        fail('google_not_configured');
+        return;
+      }
+
+      if (request.query?.error) {
+        fail(request.query.error === 'access_denied' ? 'google_cancelled' : 'google_auth_failed');
+        return;
+      }
+
+      const code = typeof request.query?.code === 'string' ? request.query.code : '';
+      const state = typeof request.query?.state === 'string' ? request.query.state : '';
+      const bindingToken = readCookie(request.headers.cookie, OAUTH_COOKIE_NAME);
+      if (!code || !state || !bindingToken || state.length > 128 || bindingToken.length > 128) {
+        fail();
+        return;
+      }
+
+      const consumed = await authModel.consumeOAuthState({
+        stateHash: hashSecret(state),
+        bindingHash: hashSecret(bindingToken)
+      });
+      response.clearCookie(OAUTH_COOKIE_NAME, oauthCookieOptions);
+      if (!consumed) {
+        fail();
+        return;
+      }
+
+      try {
+        const googleUser = await googleOAuth.exchangeCodeForUser({
+          code,
+          codeVerifier: consumed.codeVerifier,
+          redirectUri: consumed.redirectUri,
+          expectedNonce: consumed.nonce
+        });
+        const session = newSessionValues();
+        await authModel.findOrCreateGoogleUserAndSession({
+          googleSub: googleUser.sub,
+          email: googleUser.email,
+          name: googleUser.name,
+          tokenHash: session.tokenHash,
+          csrfToken: session.csrfToken,
+          expiresAt: session.expiresAt
+        });
+        response.cookie(SESSION_COOKIE_NAME, session.token, {
+          ...cookieOptions,
+          maxAge: sessionTtlHours * 60 * 60 * 1000
+        });
+        response.redirect(302, `${frontendOrigin}/#overview`);
+      } catch (error) {
+        console.error('Google OAuth callback failed:', error?.message ?? error);
+        fail();
+      }
     },
 
     async currentUser(request, response) {

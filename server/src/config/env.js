@@ -28,6 +28,7 @@ const envSchema = z.object({
   PGPASSWORD: z.string().default(''),
   PGPOOL_MAX: z.coerce.number().int().min(1).max(10).default(process.env.VERCEL ? 2 : 10),
   PGSSLMODE: z.enum(['disable', 'require']).default(isProductionLike ? 'require' : 'disable'),
+  TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(isVercelDeployment ? 1 : 0),
   HOST: z.string().trim().min(1).default(process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   FRONTEND_ORIGIN: z.string().url().refine((value) => {
@@ -43,7 +44,19 @@ const envSchema = z.object({
   MIN_EFFECTIVE_INTERVAL_SECONDS: z.coerce.number().int()
     .min(MIN_WORKER_INTERVAL_SECONDS).max(MAX_INTERVAL_SECONDS).default(MIN_EFFECTIVE_INTERVAL_SECONDS),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(60000).default(5000),
-  WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10)
+  WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+  GOOGLE_CLIENT_ID: z.string().trim().optional().transform((value) => value || undefined),
+  GOOGLE_CLIENT_SECRET: z.string().trim().optional().transform((value) => value || undefined),
+  GOOGLE_REDIRECT_URI: z.string().trim().optional().transform((value) => value || undefined)
+    .refine((value) => {
+      if (!value) return true;
+      try {
+        const parsed = new URL(value);
+        return ['http:', 'https:'].includes(parsed.protocol);
+      } catch {
+        return false;
+      }
+    }, 'Must be a valid HTTP or HTTPS URL.')
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -71,6 +84,11 @@ if (env.SESSION_COOKIE_SAME_SITE === 'none' && !env.SESSION_COOKIE_SECURE) {
     'SESSION_COOKIE_SECURE',
     'SESSION_COOKIE_SAME_SITE'
   ]);
+}
+
+if (Boolean(env.GOOGLE_CLIENT_ID) !== Boolean(env.GOOGLE_CLIENT_SECRET)) {
+  const missing = env.GOOGLE_CLIENT_ID ? 'GOOGLE_CLIENT_SECRET' : 'GOOGLE_CLIENT_ID';
+  throwConfigurationError(`${missing} is required when configuring Google OAuth.`, [missing]);
 }
 
 if (isProductionLike) {

@@ -69,9 +69,12 @@ export function createApp({
   endpointRateLimitStores,
   checkEndpoint = performHealthCheck,
   frontendOrigin = 'http://localhost:5173',
+  trustProxy = false,
   cookieSecure = false,
   cookieSameSite = 'lax',
   sessionTtlHours = 168,
+  googleOAuth = null,
+  googleRedirectUri = null,
   loginRateLimit,
   loginRateLimitStore,
   signupRateLimit,
@@ -79,6 +82,7 @@ export function createApp({
 }) {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', trustProxy || false);
   app.use((_request, response, next) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
@@ -111,7 +115,7 @@ export function createApp({
   });
   app.use(express.json({ limit: '16kb' }));
   app.use('/api/health', createHealthRouter(model));
-  app.use('/api/auth', createAuthRouter({ authModel, authentication, cookieSecure, cookieSameSite, sessionTtlHours, loginRateLimit, loginRateLimitStore, signupRateLimit, signupRateLimitStore }));
+  app.use('/api/auth', createAuthRouter({ authModel, authentication, cookieSecure, cookieSameSite, sessionTtlHours, frontendOrigin, googleOAuth, googleRedirectUri, loginRateLimit, loginRateLimitStore, signupRateLimit, signupRateLimitStore }));
   app.use('/api/endpoints', (_request, response, next) => {
     response.setHeader('Cache-Control', 'no-store');
     next();

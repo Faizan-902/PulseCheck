@@ -55,9 +55,91 @@ p { line-height: 1.55; }
 .system-pill { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--green); font-size: 12px; font-weight: 700; }
 .system-degraded { color: var(--red); }
 .system-pending { color: var(--amber); }
-.signout-button, .text-button { padding: 7px; color: var(--accent); border: 0; background: transparent; font-size: 13px; font-weight: 700; white-space: nowrap; }
-.signout-button { color: var(--muted); }
-.signout-button:hover, .text-button:hover { color: var(--accent-hover); text-decoration: underline; }
+.text-button { padding: 7px; color: var(--accent); border: 0; background: transparent; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.text-button:hover { color: var(--accent-hover); text-decoration: underline; }
+.profile-menu { position: relative; }
+.profile-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 3px 9px 3px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.profile-trigger:hover, .profile-trigger-open { border-color: #c8beab; background: var(--sand); }
+.profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--blue-bg);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+.profile-avatar-lg { width: 38px; height: 38px; font-size: 13px; }
+.profile-chevron { display: inline-grid; place-items: center; color: var(--muted); transition: transform .18s ease; }
+.profile-trigger-open .profile-chevron { transform: rotate(180deg); color: var(--ink); }
+.profile-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 20;
+  width: min(300px, calc(100vw - 24px));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 18px 46px #28272424;
+  animation: reveal .16s ease-out;
+  overflow: hidden;
+}
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, #faf6ee, var(--surface));
+}
+.profile-identity { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.profile-identity strong, .profile-identity span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-identity strong { font-size: 14px; }
+.profile-identity span { color: var(--muted); font-size: 12px; }
+.profile-badge {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--green-bg);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 700;
+}
+.profile-meta { display: grid; gap: 8px; margin: 0; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.profile-meta > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.profile-meta dt { color: var(--muted); }
+.profile-meta dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.profile-actions { padding: 8px; }
+.profile-signout {
+  width: 100%;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 700;
+}
+.profile-signout:hover:not(:disabled) { background: var(--red-bg); }
 .primary-button, .secondary-button, .check-button, .delete-button, .danger-button {
   min-height: 40px;
   display: inline-flex;
@@ -256,7 +338,8 @@ p { line-height: 1.55; }
   .nav-item { flex: 1; justify-content: center; }
   .topbar-actions { gap: 6px; }
   .add-button { min-height: 37px; padding: 0 9px; font-size: 11px; }
-  .signout-button { padding: 5px 2px; font-size: 11px; }
+  .profile-trigger { min-height: 37px; padding: 2px 7px 2px 3px; }
+  .profile-avatar { width: 28px; height: 28px; font-size: 11px; }
   .page-content { padding-top: 20px; }
   .page-heading { align-items: start; margin-bottom: 16px; }
   .workspace-hero { min-height: 166px; }

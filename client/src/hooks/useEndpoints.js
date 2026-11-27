@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../lib/api.js';
 import { deleteMonitorAndReconcile } from '../monitor-deletion.js';
+import { nextCooldownUntil, remainingCooldownSeconds } from './check-cooldown.js';
 import { useLatencyHistory } from './useLatencyHistory.js';
 
 function emptyMonitorForm(scheduling) {
@@ -21,6 +22,8 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
   const [saving, setSaving] = useState(false);
   const [checkingId, setCheckingId] = useState(null);
   const [checkError, setCheckError] = useState(null);
+  const [cooldownUntilByEndpoint, setCooldownUntilByEndpoint] = useState({});
+  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
   const [deletingId, setDeletingId] = useState(null);
   const [historyLoadingId, setHistoryLoadingId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -30,8 +33,10 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
   const [scheduling, setScheduling] = useState(null);
   const [maxEndpointsPerUser, setMaxEndpointsPerUser] = useState(null);
   const [form, setForm] = useState(null);
+  const loadRequestIdRef = useRef(0);
 
   const loadEndpoints = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
     if (!user) {
       setEndpoints([]);
       setLoading(false);
@@ -41,16 +46,18 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
     setPageErrorAction(null);
     try {
       const { data, meta } = await apiRequest('/endpoints', {}, csrfToken, true);
+      if (loadRequestIdRef.current !== requestId) return false;
       setScheduling(meta.scheduling);
       setMaxEndpointsPerUser(meta.maxEndpointsPerUser);
       setEndpoints(data);
       return true;
     } catch (error) {
+      if (loadRequestIdRef.current !== requestId) return false;
       setPageError(error.message);
       setPageErrorAction({ label: 'Retry monitor list', run: () => loadEndpoints() });
       return false;
     } finally {
-      setLoading(false);
+      if (loadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [user, csrfToken, setPageError, setPageErrorAction]);
 
@@ -65,7 +72,44 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
     loadEndpoints();
   }, [authLoading, user, loadEndpoints]);
 
-  const latency = useLatencyHistory({ page, endpoints, csrfToken });
+  const latency = useLatencyHistory({
+    enabled: Boolean(user && csrfToken),
+    page,
+    endpoints,
+    csrfToken
+  });
+
+  const hasActiveCooldown = useMemo(
+    () => Object.values(cooldownUntilByEndpoint).some((until) => until > cooldownNow),
+    [cooldownUntilByEndpoint, cooldownNow]
+  );
+
+  useEffect(() => {
+    if (!hasActiveCooldown) return undefined;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setCooldownNow(now);
+      setCooldownUntilByEndpoint((current) => {
+        const nextEntries = Object.entries(current).filter(([, until]) => until > now);
+        return nextEntries.length === Object.keys(current).length ? current : Object.fromEntries(nextEntries);
+      });
+      setCheckError((current) => {
+        if (!current?.isCooldown) return current;
+        const until = cooldownUntilByEndpoint[current.endpointId];
+        return until && until > now ? current : null;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveCooldown, cooldownUntilByEndpoint]);
+
+  const cooldownSecondsByEndpoint = useMemo(() => {
+    const next = {};
+    for (const [id, until] of Object.entries(cooldownUntilByEndpoint)) {
+      const seconds = remainingCooldownSeconds(until, cooldownNow);
+      if (seconds > 0) next[id] = seconds;
+    }
+    return next;
+  }, [cooldownUntilByEndpoint, cooldownNow]);
 
   const summary = useMemo(
     () => ({
@@ -157,6 +201,10 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
   }
 
   async function runCheck(endpoint) {
+    const now = Date.now();
+    if (checkingId === endpoint.id || remainingCooldownSeconds(cooldownUntilByEndpoint[endpoint.id], now) > 0) {
+      return;
+    }
     setCheckingId(endpoint.id);
     setCheckError(null);
     setPageError('');
@@ -164,6 +212,12 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
     setNotice('');
     try {
       const check = await apiRequest(`/endpoints/${endpoint.id}/check`, { method: 'POST' }, csrfToken);
+      const completedAt = Date.now();
+      setCooldownNow(completedAt);
+      setCooldownUntilByEndpoint((current) => ({
+        ...current,
+        [endpoint.id]: nextCooldownUntil({ currentUntil: current[endpoint.id], now: completedAt })
+      }));
       latency.showSavedCheck(endpoint.id, check);
       const httpStatus = check.httpStatus ? ` · HTTP ${check.httpStatus}` : '';
       setNotice(`${endpoint.name}: ${check.status}${httpStatus} · ${check.latencyMs} ms`);
@@ -171,7 +225,23 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
       if (expandedEndpointId === endpoint.id) await loadHistory(endpoint.id);
     } catch (error) {
       if ([403, 429].includes(error.status)) {
-        setCheckError({ endpointId: endpoint.id, message: error.message });
+        const failedAt = Date.now();
+        const isPerMonitorCooldown = error.status === 429
+          && Number.isFinite(error.retryAfterSeconds)
+          && error.retryAfterSeconds > 0
+          && error.retryAfterSeconds <= 30;
+        if (isPerMonitorCooldown) {
+          setCooldownNow(failedAt);
+          setCooldownUntilByEndpoint((current) => ({
+            ...current,
+            [endpoint.id]: nextCooldownUntil({
+              currentUntil: current[endpoint.id],
+              retryAfterSeconds: error.retryAfterSeconds,
+              now: failedAt
+            })
+          }));
+        }
+        setCheckError({ endpointId: endpoint.id, message: error.message, isCooldown: isPerMonitorCooldown });
       } else {
         setPageError(error.message);
         setPageErrorAction({ label: 'Retry check', run: () => runCheck(endpoint) });
@@ -213,6 +283,12 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
       }
 
       latency.clearForMonitor(target.id);
+      setCooldownUntilByEndpoint((current) => {
+        if (!(target.id in current)) return current;
+        const next = { ...current };
+        delete next[target.id];
+        return next;
+      });
       setChecksByEndpoint((current) => {
         const next = { ...current };
         delete next[target.id];
@@ -270,8 +346,20 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
   }
 
   function clearMonitors() {
+    loadRequestIdRef.current += 1;
     setEndpoints([]);
     setChecksByEndpoint({});
+    setExpandedEndpointId(null);
+    setCheckingId(null);
+    setCheckError(null);
+    setCooldownUntilByEndpoint({});
+    setDeletingId(null);
+    setHistoryLoadingId(null);
+    setDeleteTarget(null);
+    setDeleteError('');
+    setFormOpen(false);
+    setFormError('');
+    setForm(null);
   }
 
   return {
@@ -282,6 +370,7 @@ export function useEndpoints({ user, authLoading, csrfToken, page, messages }) {
     saving,
     checkingId,
     checkError,
+    cooldownSecondsByEndpoint,
     deletingId,
     historyLoadingId,
     deleteTarget,

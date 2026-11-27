@@ -207,6 +207,34 @@ describe('authentication API', () => {
     expect(signup.status).toBe(201);
   });
 
+  it('isolates login rate limits per client IP behind a trusted proxy without validation errors or spoof bypass', async () => {
+    const authModel = makeAuthModel();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const app = makeApp(authModel, {
+        trustProxy: 1,
+        loginRateLimit: { windowMs: 60_000, limit: 2 }
+      });
+      const attempt = (xff) => request(app)
+        .post('/api/auth/login')
+        .set('Origin', origin)
+        .set('X-Forwarded-For', xff)
+        .send({ email: 'none@example.com', password: 'incorrect' });
+
+      expect((await attempt('203.0.113.1')).status).toBe(401);
+      expect((await attempt('203.0.113.1')).status).toBe(401);
+      // Client 2 must not be locked out by Client 1's failed logins.
+      expect((await attempt('203.0.113.2')).status).toBe(401);
+      // Spoofing a different left-hand IP must not bypass Client 1's limit.
+      const spoofed = await attempt('198.51.100.99, 203.0.113.1');
+      expect(spoofed.status).toBe(429);
+      expect(spoofed.body.error.code).toBe('LOGIN_RATE_LIMITED');
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('rate limits signup before invoking Argon2 or creating the account', async () => {
     const authModel = makeAuthModel();
     const signupRateLimitStore = makeLimitStore();
@@ -234,5 +262,94 @@ describe('authentication API', () => {
     expect(response.headers['x-frame-options']).toBe('DENY');
     expect(response.headers['referrer-policy']).toBe('no-referrer');
     expect(response.headers['permissions-policy']).toContain('camera=()');
+  });
+
+  it('rejects password login cleanly for a Google-only account without a password hash', async () => {
+    const authModel = makeAuthModel();
+    authModel.users.set('google@example.com', {
+      id: userId,
+      name: 'Google User',
+      email: 'google@example.com',
+      passwordHash: null,
+      createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    const app = makeApp(authModel);
+
+    const response = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', origin)
+      .send({ email: 'google@example.com', password: 'some-password-attempt' });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('redirects to signin with an error when Google OAuth is not configured', async () => {
+    const app = makeApp(makeAuthModel());
+    const response = await request(app).get('/api/auth/google');
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toBe(`${origin}/#signin?authError=google_not_configured`);
+  });
+
+  it('completes Google OAuth with state binding and rejects missing-cookie or replayed callbacks', async () => {
+    const oauthStates = new Map();
+    const authModel = {
+      ...makeAuthModel(),
+      createOAuthState: vi.fn(async (values) => {
+        oauthStates.set(values.stateHash, values);
+      }),
+      consumeOAuthState: vi.fn(async ({ stateHash, bindingHash }) => {
+        const row = oauthStates.get(stateHash);
+        if (!row || row.bindingHash !== bindingHash) return null;
+        oauthStates.delete(stateHash);
+        return { codeVerifier: row.codeVerifier, nonce: row.nonce, redirectUri: row.redirectUri };
+      }),
+      findOrCreateGoogleUserAndSession: vi.fn(async ({ googleSub, email, name, tokenHash, csrfToken }) => {
+        const user = { id: userId, name, email, googleSub };
+        authModel.sessions.set(tokenHash, { userId, name, email, csrfToken });
+        return user;
+      })
+    };
+    const googleOAuth = {
+      authorizationUrl: vi.fn(({ redirectUri, state, nonce, codeChallenge }) =>
+        `https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&nonce=${nonce}&code_challenge=${codeChallenge}`
+      ),
+      exchangeCodeForUser: vi.fn(async () => ({
+        sub: 'google-sub-999',
+        email: 'faizan@example.com',
+        name: 'Faizan Khan'
+      }))
+    };
+    const app = makeApp(authModel, { googleOAuth });
+
+    const start = await request(app).get('/api/auth/google');
+    expect(start.status).toBe(302);
+    const authLocation = new URL(start.headers.location);
+    const state = authLocation.searchParams.get('state');
+    expect(state).toBeTruthy();
+    const oauthCookie = start.headers['set-cookie'][0].split(';')[0];
+    expect(oauthCookie).toContain('pulsecheck_oauth=');
+
+    // Missing cookie must fail.
+    const missingCookie = await request(app).get(`/api/auth/google/callback?code=abc&state=${state}`);
+    expect(missingCookie.status).toBe(302);
+    expect(missingCookie.headers.location).toBe(`${origin}/#signin?authError=google_auth_failed`);
+
+    // Valid callback creates session and redirects to overview.
+    const callback = await request(app)
+      .get(`/api/auth/google/callback?code=abc&state=${state}`)
+      .set('Cookie', oauthCookie);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toBe(`${origin}/#overview`);
+    const sessionCookie = callback.headers['set-cookie'].find((c) => c.startsWith('pulsecheck_session='));
+    expect(sessionCookie).toContain('HttpOnly');
+
+    // Replay of the same state + cookie must fail.
+    const replay = await request(app)
+      .get(`/api/auth/google/callback?code=abc&state=${state}`)
+      .set('Cookie', oauthCookie);
+    expect(replay.status).toBe(302);
+    expect(replay.headers.location).toBe(`${origin}/#signin?authError=google_auth_failed`);
   });
 });

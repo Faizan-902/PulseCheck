@@ -214,6 +214,7 @@ export function createEndpointModel(pool) {
       // Use a dedicated connection so claims and writes can use the pool even at max=1.
       // A transaction-scoped lock also works through a transaction-mode pooler.
       const client = new pg.Client(pool.options);
+      client.on('error', () => {});
       await client.connect();
       try {
         await client.query('BEGIN');
@@ -222,7 +223,8 @@ export function createEndpointModel(pool) {
         );
         return lock.acquired ? await run(lock.cutoff) : null;
       } finally {
-        await client.end();
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end().catch(() => {});
       }
     },
 
@@ -302,7 +304,7 @@ export function createEndpointModel(pool) {
       }
     },
 
-    async listIncidentFeed(ownerId) {
+    async listIncidentFeed(ownerId, limit = 100) {
       const result = await pool.query(
         `SELECT incident.id, incident.endpoint_id AS "endpointId",
                 incident.opened_at AS "openedAt", incident.resolved_at AS "resolvedAt",
@@ -310,13 +312,14 @@ export function createEndpointModel(pool) {
          FROM monitored_endpoints AS endpoint
          JOIN incidents AS incident ON incident.endpoint_id = endpoint.id
          WHERE endpoint.owner_id = $1
-         ORDER BY incident.opened_at DESC, incident.id DESC`,
-        [ownerId]
+         ORDER BY incident.opened_at DESC, incident.id DESC
+         LIMIT $2`,
+        [ownerId, limit]
       );
       return result.rows;
     },
 
-    async listIncidents(endpointId, ownerId) {
+    async listIncidents(endpointId, ownerId, limit = 100) {
       const result = await pool.query(
         `SELECT id, endpoint_id AS "endpointId", opened_at AS "openedAt",
                 resolved_at AS "resolvedAt"
@@ -326,8 +329,9 @@ export function createEndpointModel(pool) {
            WHERE monitored_endpoints.id = incidents.endpoint_id
              AND monitored_endpoints.owner_id = $2
          )
-         ORDER BY opened_at DESC, id DESC`,
-        [endpointId, ownerId]
+         ORDER BY opened_at DESC, id DESC
+         LIMIT $3`,
+        [endpointId, ownerId, limit]
       );
       return result.rows;
     }

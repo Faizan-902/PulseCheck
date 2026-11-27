@@ -1,5 +1,7 @@
+import React from 'react';
 import { Brand } from './Brand.jsx';
 import { Icon } from './Icon.jsx';
+import { ProfileMenu } from './ProfileMenu.jsx';
 
 const pages = [
   { id: 'overview', label: 'Overview' },
@@ -16,6 +18,11 @@ export function Topbar({
   canAddMonitor,
   atMonitorLimit,
   openForm,
+  user,
+  monitorCount,
+  maxEndpointsPerUser,
+  scheduling,
+  signingOut,
   handleLogout
 }) {
   return (
@@ -59,9 +66,14 @@ export function Topbar({
             <Icon name="plus" size={16} />
             <span>Add monitor</span>
           </button>
-          <button className="signout-button" type="button" onClick={handleLogout}>
-            Sign out
-          </button>
+          <ProfileMenu
+            user={user}
+            monitorCount={monitorCount}
+            maxEndpointsPerUser={maxEndpointsPerUser}
+            scheduling={scheduling}
+            signingOut={signingOut}
+            onLogout={handleLogout}
+          />
         </div>
       </div>
     </header>
